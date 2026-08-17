@@ -33,9 +33,9 @@ export class Bridge {
     this.pending = new Set();
     /** dshSessionId -> { conversationId, msg } 最近一次发送者，用于回复路由 */
     this.replyTargets = new Map();
-    /** 统一回复/推送候选（去抖只发最终结果）与去抖定时器 */
+    /** 统一回复/推送候选（等 turn/end 只发最终结果）与兜底超时 */
     this._replyCandidate = null;
-    this._replyTimer = null;
+    this._replyTimeout = null;
     /** 处于「定时提醒回复窗口」的 sessionId 集合（只推这些会话的主动回复） */
     this._scheduleReminderSessions = new Set();
     this._onMuxEvent = (ev) => this._handleSessionEvent(ev);
@@ -54,7 +54,7 @@ export class Bridge {
   stop() {
     this.dingtalk?.off?.('message', this._onDingMessage);
     this.dsh?.off?.('session/event', this._onMuxEvent);
-    if (this._replyTimer) { clearTimeout(this._replyTimer); this._replyTimer = null; }
+    if (this._replyTimeout) { clearTimeout(this._replyTimeout); this._replyTimeout = null; }
     this._replyCandidate = null;
     this._scheduleReminderSessions.clear();
   }
@@ -443,11 +443,12 @@ export class Bridge {
         this.log(`[push] session=${sessionId} 检测到定时提醒注入(source.plugin=${event?.data?.source?.plugin})，开启提醒回复窗口`);
       }
     }
-    // 主动推送场景的事件（assistant/message + 跟随的 tool/call/step）都收，
-    // 用于「延迟去抖 → 只推最终结果」。
-    if (this.config.bridge?.enableActivePush !== false) {
-      this._trackActivePushActivity(sessionId, event);
+    // turn/end = Agent 回复完成 → 立即发送暂存的最终候选（不再等去抖）
+    if (type === 'turn/end') {
+      this._flushReplyCandidate(sessionId);
+      return;
     }
+    // 只处理 assistant/message 作为候选来源
     if (type !== 'assistant/message') return;
     // 原始 SessionEvent：{ type, seq, time, data:{ message:{ content:[...] } } }
     const text = assistantText(event);
@@ -458,7 +459,7 @@ export class Bridge {
     if (this._sentSeq.has(event.seq)) return;
     this._sentSeq.add(event.seq);
 
-    // 会话的所有输出统一走「候选 → 去抖 → 只发最终一条」：
+    // 会话的所有输出统一走「候选 → turn/end → 只发最终一条」：
     // 1) 有 replyTarget（用户消息触发的回复）→ 回发该钉钉会话，回发后消费删除 target
     // 2) 无 replyTarget 且在提醒窗口内 → 主动推送（持久 webhook）
     // 以此避免中间步骤（思考、工具调用间的输出）被逐条发到钉钉。
@@ -467,10 +468,9 @@ export class Bridge {
   }
 
   /**
-   * 统一回复候选与去抖（对回复路径和主动推送路径共用）。
-   * 收到 assistant/message → 设为候选并重置去抖定时器；
-   * 后续 tool/call / step/start 等继续输出则替换候选并续期；
-   * 去抖到期（安静窗口）后只发候选（= 最终结果）。
+   * 统一回复候选（对回复路径和主动推送路径共用）。
+   * 收到 assistant/message → 暂存候选；等到 turn/end（Agent 回复完成）才真正发送。
+   * 安全兜底：若长时间没有 turn/end（异常），超时后也发送，避免消息滞留。
    * 主动推送路径仅在该会话处于「定时提醒回复窗口」时才设候选（只推定时提醒触发的回复）。
    */
   _setReplyCandidate(sessionId, seq, text, target) {
@@ -479,38 +479,48 @@ export class Bridge {
       return;
     }
     this._replyCandidate = { sessionId, seq, text, target };
-    this.log(`[reply] 候选 session=${sessionId} seq=${seq} target=${target ? '有(replyTarget)' : '无'}（等待稳定后发最终结果）`);
-    this._resetReplyTimer();
+    this.log(`[reply] 候选 session=${sessionId} seq=${seq} target=${target ? '有(replyTarget)' : '无'}（等待 turn/end 后发最终结果）`);
+    this._armReplyTimeout(sessionId);
   }
 
-  _resetReplyTimer() {
-    if (this._replyTimer) { clearTimeout(this._replyTimer); this._replyTimer = null; }
-    const quiet = Number(this.config.bridge?.activePushQuietMs) || 2500;
-    this._replyTimer = setTimeout(() => {
-      this._replyTimer = null;
-      const cand = this._replyCandidate;
-      this._replyCandidate = null;
-      if (!cand) return;
-      const from = cand.target ? '钉钉消息回复' : '主动推送';
-      this.log(`[reply] 最终结果稳定 session=${cand.sessionId} seq=${cand.seq} (${from}) 文本长度=${cand.text.length}`);
-      if (cand.target) {
-        // 回复路径：回发一次并消费该 replyTarget（一条用户消息 → 一条回复）
-        this.replyTargets.delete(cand.sessionId);
-        this._replyText(cand.target, this._formatReply(cand.text)).catch((err) => {
-          this.log(`reply to dingtalk failed: ${err?.message || err}`);
-        });
+  /** 兜底超时：万一没收到 turn/end（异常中断），超时后也把候选发出，防止消息滞留。 */
+  _armReplyTimeout(sessionId) {
+    if (this._replyTimeout) { clearTimeout(this._replyTimeout); this._replyTimeout = null; }
+    const fallback = Number(this.config.bridge?.replyFallbackMs) || 60000;
+    this._replyTimeout = setTimeout(() => {
+      this._replyTimeout = null;
+      if (!this._replyCandidate || this._replyCandidate.sessionId !== sessionId) return;
+      this.log(`[reply] 兜底超时(${fallback}ms)未收到 turn/end，仍发送候选 session=${sessionId} seq=${this._replyCandidate.seq}`);
+      this._flushReplyCandidate(sessionId);
+    }, fallback);
+  }
+
+  /** 发送暂存的最终候选（turn/end 触发或兜底超时触发）。 */
+  _flushReplyCandidate(sessionId) {
+    if (this._replyTimeout) { clearTimeout(this._replyTimeout); this._replyTimeout = null; }
+    const cand = this._replyCandidate;
+    if (!cand || cand.sessionId !== sessionId) return;
+    this._replyCandidate = null;
+    const from = cand.target ? '钉钉消息回复' : '主动推送';
+    this.log(`[reply] 最终结果 session=${cand.sessionId} seq=${cand.seq} (${from}) 文本长度=${cand.text.length}`);
+    if (cand.target) {
+      // 回复路径：回发一次并消费该 replyTarget（一条用户消息 → 一条回复）
+      this.replyTargets.delete(cand.sessionId);
+      this._replyText(cand.target, this._formatReply(cand.text)).catch((err) => {
+        this.log(`reply to dingtalk failed: ${err?.message || err}`);
+      }).finally(() => {
         this.log(`[reply] 已回发钉钉: ${JSON.stringify(this._formatReply(cand.text)).slice(0, 60)}…`);
+      });
+    } else {
+      const pushed = this._tryActivePush(cand.sessionId, cand.text);
+      if (pushed) {
+        this.log(`[push] 已主动推送 session=${cand.sessionId} seq=${cand.seq}`);
+        // 一个提醒只推一条：推送后关闭该会话的提醒窗口
+        this._scheduleReminderSessions.delete(cand.sessionId);
       } else {
-        const pushed = this._tryActivePush(cand.sessionId, cand.text);
-        if (pushed) {
-          this.log(`[push] 已主动推送 session=${cand.sessionId} seq=${cand.seq}`);
-          // 一个提醒只推一条：推送后关闭该会话的提醒窗口
-          this._scheduleReminderSessions.delete(cand.sessionId);
-        } else {
-          this.log(`[push] 推送失败/无目标 session=${cand.sessionId} seq=${cand.seq}`);
-        }
+        this.log(`[push] 推送失败/无目标 session=${cand.sessionId} seq=${cand.seq}`);
       }
-    }, quiet);
+    }
   }
 
   /**
@@ -525,18 +535,6 @@ export class Bridge {
       .filter((c) => c?.type === 'text' && typeof c.text === 'string')
       .map((c) => c.text)
       .join('');
-  }
-
-  /**
-   * 每次「可能继续输出」的事件到来都续期去抖定时器。
-   * 覆盖 assistant/message、tool/*、step/*、agent/status。
-   */
-  _trackActivePushActivity(sessionId, event) {
-    const t = event?.type || '';
-    if (!/^(assistant\/message|tool\/|step\/|agent\/status)/.test(t)) return;
-    if (!this._replyCandidate) return;
-    if (this._replyCandidate.sessionId !== sessionId) return;
-    this._resetReplyTimer();
   }
 
   /**

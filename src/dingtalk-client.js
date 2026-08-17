@@ -108,7 +108,7 @@ export class DingTalkClient extends EventEmitter {
    * 回复一条消息到会话。
    * 优先使用回调携带的 sessionWebhook（最可靠、无需 access_token）。
    * 若文本包含 markdown 语法则用钉钉 markdown 消息（渲染 **加粗**、`代码`、列表、
-   * 链接、标题等），否则退回 text。
+   * 链接、标题等；markdown 必须带 title 字段），否则退回 text。
    * @param {object} msg  机器人消息负载（含 sessionWebhook）
    * @param {string} text 回复文本
    */
@@ -117,24 +117,48 @@ export class DingTalkClient extends EventEmitter {
     if (!webhook) throw new Error('no sessionWebhook in message');
     const useMarkdown = forceMarkdown === true || looksLikeMarkdown(text);
     const body = useMarkdown
-      ? { msgtype: 'markdown', markdown: { text } }
+      ? { msgtype: 'markdown', markdown: { title: activePushTitle(text), text } }
       : { msgtype: 'text', text: { content: text } };
     const res = await fetch(webhook, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
+    const textBody = await res.text().catch(() => '');
     if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      throw new Error(`reply HTTP ${res.status}: ${t.slice(0, 200)}`);
+      throw new Error(`reply HTTP ${res.status}: ${textBody.slice(0, 200)}`);
+    }
+    // 钉钉业务错误：HTTP 200 但 body { errcode, errmsg }，如 markdown 缺 title → 400402
+    try {
+      const j = textBody ? JSON.parse(textBody) : null;
+      if (j && typeof j.errcode === 'number' && j.errcode !== 0) {
+        throw new Error(`dingtalk errcode=${j.errcode} errmsg=${j.errmsg || ''}`);
+      }
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        // 非 JSON（可能是空响应），忽略
+      } else {
+        throw e;
+      }
     }
     return res;
   }
 }
 
+/**
+ * markdown 消息的标题（钉钉必填）。取首行非空文本，截断到 40 字符。
+ */
+export function activePushTitle(text) {
+  const firstLine = String(text || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  const clean = (firstLine || '消息').replace(/\*\*|`|#/g, '').trim();
+  return clean.slice(0, 40) || '消息';
+}
+
 /** 粗略判断文本是否包含钉钉支持的 markdown 语法。 */
-export function looksLikeMarkdown(text) {
-  if (!text) return false;
+export function looksLikeMarkdown(text) {  if (!text) return false;
   return (
     /\*\*[*\s]/.test(text) ||        // **加粗**
     /(^|\n)\s*[-*] /.test(text) ||   // 列表
