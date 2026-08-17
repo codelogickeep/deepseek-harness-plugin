@@ -10,6 +10,10 @@ status: active
 > 来源：2026-08 期间通过 DSH 内置（现为 MiniMax）web 搜索检索到的官方/社区资料，
 > 加上本人在本机 DSH (deepseek-harness) 上亲手接入 MiniMax 搜索插件的实战经验。
 > 本文是「事实 + 已验证结论」，与 [PLUGIN-ECOSYSTEM.md](./PLUGIN-ECOSYSTEM.md)（概念导览）互补。
+>
+> 📌 **2026-08-17 更新**：已完成基于 Cordis 论文 + 官方文档的系统学习，
+> 权威原理见 **[DSH-CORDIS-PRINCIPLES.md](./DSH-CORDIS-PRINCIPLES.md)**。本文保留了早期实战笔记，
+> 其中与权威原理冲突的判断以原理文档为准。
 
 ---
 

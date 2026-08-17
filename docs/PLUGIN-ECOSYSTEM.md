@@ -16,10 +16,10 @@ status: active
 
 | | **A. 外部集成插件**（本仓库的钉钉桥接器） | **B. DSH 本体插件**（Cordis 插件） |
 | --- | --- | --- |
-| 是什么 | 独立运行的 Node 进程，通过 DSH 的 `/api` 通道交互 | 注册在 DSH 进程内部的扩展（工具/服务/事件/界面） |
-| 代码放哪 | **本仓库** `src/`（有实体文件） | 无实体文件，运行时动态定义；或 DSH 宿主配置目录 |
-| 怎么运行 | `npm start`（独立 daemon） | `cordis_define` + `cordis_run` 注入当前 DSH 进程 |
-| 生命周期 | 独立于 DSH；**机器关了就停**，需手动/自启拉起 | 跟随 DSH 进程；DSH 重启后动态定义的会丢 |
+| 是什么 | 独立运行的 Node 进程，通过 DSH 的 `/api` 通道交互 | 注册到 DSH 配置树（host composition / agent preset）的扩展（工具/服务/事件/界面） |
+| 代码放哪 | **本仓库** `src/`（有实体文件） | **有实体模块文件**（如 `minimax-search.mjs`），经 `cordis.patch.yml` 挂进配置树，或放进 preset |
+| 怎么运行 | `npm start`（独立 daemon） | 定义插件行（`- id: xxx`），由 DSH **启动时加载**；patch 变更经 HMR 生效 |
+| 生命周期 | 独立于 DSH；**机器关了就停**，需手动/自启拉起 | 跟随 DSH 进程；DSH 重启后**配置树里的仍会加载**（动态 `cordis_define` 才是临时） |
 | 给谁用 | 钉钉用户 ↔ DSH（外部世界进来的入口） | 给 DSH Agent 本身加能力（模型步骤里能调的工具等） |
 | 典型例子 | 钉钉收发、会话管理、`/status` `/list` `/use` | web 搜索工具、文件工具、新 Service、主题/UI |
 | 依赖什么 | 目标机器上**必须运行着 DSH** | 本身就是 DSH 的一部分 |
@@ -119,18 +119,30 @@ async _handleWeather(msg, text) {
 
 ### 4.2 想给 DSH 本体加能力 → Cordis 插件（B 类）
 
-用 DSH 的 Cordis 机制，在**运行时**定义并注入当前 DSH 进程：
+**正确姿势：把插件行写进配置树**（host composition / agent preset），DSH 启动时加载、HMR 生效、持久存在：
 
 ```
-cordis_inspect_list   → 发现 Host/Client 能力
-cordis_inspect_query  → 查询确切 Service/Event/Tool 签名
-cordis_define         → 定义插件（纯 JS，Host/Client）
-cordis_run            → 注入运行
+~/.dsh/profiles/web/cordis.patch.yml   ← 用户层 patch（覆盖/insert 插件行）
+~/.dsh/profiles/web/plugins/xxx.mjs    ← 插件实体模块（本仓库 plugins/ 同步过来）
 ```
 
-- 这类插件**代码不落在本仓库**；要么用 `cordis_define` 动态注入（DSH 重启丢失），要么写进 DSH 宿主配置持久。
-- **适用场景**：给 Agent 加工具（web 搜索、读文件、跑命令）、注册服务、自定义 UI。
-- 本会话里 Cordis 动态插件就是一个活例子（凡是 Tool 卡、运行卡都是这套机制的产物）。
+示例（本仓库已验证）：
+```yaml
+- id: web-search-deepseek
+  disabled: true
+- id: web
+  config: { searchProvider: minimax }
+- insert:
+    - id: minimax-search
+      name: ./plugins/minimax-search.mjs
+```
+
+> ⚠️ **旧版本文档说「B 类无实体文件 / 运行时动态 definition」是错的**：
+> DSH 插件的主体形态是**配置树插件行 + 实体模块文件**（如本仓库 `plugins/minimax-search/`）。
+> 本会话的 `cordis_define` + `cordis_run`（动态 Cordis 插件）只是**进程内临时实验机制**，DSH 重启即失，
+> 想持久需要把插件落成配置树里的行。
+
+**适用场景**：给 Agent 加工具（web 搜索、读文件、跑命令）、注册服务（`ctx.tools`/`ctx.llm`…）、自定义 UI、监听事件。
 
 ### 4.3 两类各放哪的最短答案
 
