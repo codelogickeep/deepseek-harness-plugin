@@ -1,0 +1,26 @@
+{
+  "dsh": {
+    "baseUrl": "http://127.0.0.1:3080"
+  },
+  "dingtalk": {
+    "appKey": "",
+    "appSecret": "",
+    "robotCode": "",
+    "streamEnabled": true
+  },
+  "mapping": {
+    "file": "data/session-mapping.json",
+    "perConversation": true,
+    "fixedSessionId": "",
+    "sessionCwd": "/Users/zhengyd/OpenProject/deepseek-harness-plugin",
+    "agentPreset": "code",
+    "mode": "independent"
+  },
+  "bridge": {
+    "replyPrefix": "",
+    "maxBlankLines": 2
+  },
+  "log": {
+    "level": "info"
+  }
+}

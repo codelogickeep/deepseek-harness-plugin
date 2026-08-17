@@ -1,0 +1,29 @@
+{
+  "name": "dsh-dingtalk-bridge",
+  "version": "0.1.0",
+  "description": "钉钉 ↔ DeepSeek Harness(DSH) 双向通信桥接器：钉钉企业内部机器人(Stream 模式) + DSH /api 外部客户端协议",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "check:config": "node src/check-config.js",
+    "test": "node --test --test-force-exit \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "dingtalk-stream": "^2.1.5",
+    "ws": "^8.21.3"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dingtalk",
+    "dingtalk-stream",
+    "ai",
+    "agent"
+  ],
+  "license": "MIT"
+}
