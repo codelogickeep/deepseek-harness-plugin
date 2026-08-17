@@ -90,16 +90,19 @@ npm start
 
 把 [MiniMax「coding_plan/search」](https://platform.minimaxi.com) 注册为 DSH 的 `web` 搜索 provider，替代失效的 DeepSeek 官方搜索。接入后用 `web_search` 工具即可获得真实网页结果。
 
+- **源码**：`plugins/minimax-search/minimax-search.mjs`（仓库唯一真相源）
+- **安装**：`npm run install:plugins`（脚手架同步到 `~/.dsh/profiles/web/plugins/`）
 - **一键接入**：[docs/MINIMAX-SEARCH.md](docs/MINIMAX-SEARCH.md)
-- **宿主机制**：`~/.dsh/profiles/web/cordis.patch.yml` 里 disable 内置 DeepSeek + `searchProvider: minimax` + 插入插件文件 `plugins/minimax-search.mjs`
+- **宿主机制**：`cordis.patch.yml` disable 内置 DeepSeek + `searchProvider: minimax` + 插入插件行
 - **key**：`~/.dsh/.env`（DSH 启动自动读取，不入库）
 
 ---
 
 ## 脚手架：如何往这个项目里加新插件
 
-1. **独立进程类**（如钉钉桥接器）→ 放 `src/` 或独立子目录，共享 `/api` 协议。
-2. **DSH 宿主插件**（如 MiniMax 搜索）→ 插件文件 + `cordis.patch.yml` 行，见 [docs/MINIMAX-SEARCH.md](docs/MINIMAX-SEARCH.md)。
+1. **独立进程类**（如钉钉桥接器）→ 放 `src/`，共享 `/api` 协议。
+2. **DSH 宿主插件**（如 MiniMax 搜索）→ 放 `plugins/<name>/` 子目录，源码唯一真相；
+   用 `npm run install:plugins` 同步到 DSH 宿主（见 [scripts/install-plugins.mjs](scripts/install-plugins.mjs)）。
 3. 新插件务必写**文档**（带 frontmatter）+ **测试** + 更新 README 插件目录。
 
 机制与目录规划详见 [docs/PLUGIN-ECOSYSTEM.md](docs/PLUGIN-ECOSYSTEM.md)。
@@ -109,14 +112,18 @@ npm start
 ## 项目结构
 
 ```
-├── src/                     # 插件源码（钉钉桥接器等）
+├── src/                     # ① 独立进程类插件（钉钉桥接器等）
 │   ├── index.js             # 入口/装配/优雅关闭
 │   ├── config.js            # 配置加载（env/.env/config.json + 校验）
 │   ├── dsh-client.js        # DSH 外部客户端（RPC + WS 事件流 + 自动重连）
 │   ├── dingtalk-client.js   # 钉钉 Stream 客户端
 │   ├── sessions.js          # 会话映射持久化
 │   └── bridge.js            # 双向转发核心
-├── plugins/                 # DSH 宿主插件（按需新建）
+├── plugins/                 # ② DSH 宿主插件（每个插件一个子目录，源码唯一真相源）
+│   └── minimax-search/
+│       └── minimax-search.mjs
+├── scripts/
+│   └── install-plugins.mjs  # 脚手架：同步 plugins/ → ~/.dsh/profiles/<profile>/plugins/
 ├── test/                    # 集成测试（需要 DSH 在线）
 ├── config/config.example.json
 ├── docs/

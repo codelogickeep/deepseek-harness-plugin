@@ -178,27 +178,33 @@ cordis_run            → 注入运行
 你想「以后的 DSH 插件都放当前项目」——完全可行，用清晰目录分层即可：
 
 ```
-deepseek-harness-plugin/            ← 你的「插件中心」
-├── src/
+deepseek-harness-plugin/            ← 你的「DSH 插件集合 + 脚手架」
+├── src/                            ① 独立进程类插件（如钉钉桥接器）
 │   ├── index.js                    入口
 │   ├── bridge.js                   双向转发（钉钉消息 ↔ DSH）
 │   ├── dingtalk-client.js          钉钉 Stream 客户端
 │   ├── dsh-client.js               DSH 客户端
-│   ├── sessions.js                 会话映射
-│   └── plugins/                    ★ 新增：各类功能插件（通过 bridge 注册）
-│       ├── weather.js              例：天气查询（钉钉 /天气）
-│       ├── notifier.js             例：定时/事件主动推送
-│       └── ...
-├── config/                         配置
-├── docs/
+│   └── sessions.js                 会话映射
+├── plugins/                        ★ ② DSH 宿主插件（每个插件一个子目录）
+│   └── minimax-search/
+│       └── minimax-search.mjs      例：MiniMax 网页搜索 provider
+├── scripts/
+│   └── install-plugins.mjs         ★ 脚手架：同步 plugins/ → DSH 宿主
+├── config/                         配置模板
+├── docs/                           文档（带 frontmatter）
 ├── test/
 └── package.json
 ```
 
 设计原则：
-1. **每个「插件」= 一个模块**（`src/plugins/xxx.js`），导出一个 register 函数，在 `bridge.js` 里注册路由。
-2. **共享基建**：都用 Bridge 提供的 `_replyText` / `dsh` / `dingtalk`，不用重复造。
-3. **可测试**：每个插件带自己的测试。
+1. **两类插件分开放**：`src/` 放独立进程类（钉钉桥接器）；`plugins/` 放 DSH 宿主插件（每个子目录=一个插件）。
+2. **仓库是唯一真相源**：宿主插件的源码只存在于 `plugins/`；通过脚手架脚本安装到 DSH 宿主。
+3. **安装脚手架**：`npm run install:plugins` 把 `plugins/*/` 同步到 `~/.dsh/profiles/<profile>/plugins/`（可 `DSH_PROFILE=tui` 指定 profile）。改完宿主插件 → 重跑脚本 → HMR/重启 DSH 生效。
+4. **共享基建**：独立进程类插件都用 Bridge 提供的 `_replyText` / `dsh` / `dingtalk`，不重复造。
+5. **可测试**：每个插件带自己的测试 + 文档。
+
+### 为什么不用 `src/plugins/`
+早期方案把宿主插件放 `src/plugins/`（随 bridge 进程跑），但 DSH 宿主插件是**注入 DSH 进程**的，不能靠桥接进程加载。所以单独 `plugins/` 目录 + 同步脚本，语义更清晰（宿主插件 vs 进程插件）。
 
 ### 放不进这个项目的
 - **给 DSH Agent 本体加工具的 Cordis 插件**（web 搜索、文件操作等）——它们不在独立进程里跑，而是注入 DSH 进程，需走 Cordis 机制，无法让它们在「这个桥接进程」里以同样方式跑。
