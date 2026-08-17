@@ -423,31 +423,47 @@ export class Bridge {
   }
 
   /**
-   * 主动推送：把 DSH 会话产生的消息推送到「把它设为投递目标」的钉钉会话。
-   * 反查 session-mapping：遍历 mapping，找 activeSessionId === sessionId（或历史里用过它）
-   * 的 conversation，取持久 webhook 推送。返回是否推送了。
+   * 主动推送：把 DSH 会话产生的消息推送到「把它设为投递目标 / 用过它」的钉钉会话。
+   * 反查 session-mapping：遍历 mapping，找 activeSessionId === sessionId 的 conversation；
+   * 若无精确 match，再退而找 sessions 历史里包含该 sessionId 的 conversation（仅当唯一）。
+   * 取持久 webhook 推送。返回是否推送了。
    */
   _tryActivePush(sessionId, text) {
     if (this.config.bridge?.enableActivePush === false) {
       this.log(`[push] 主动推送已禁用（bridge.enableActivePush=false），跳过 session=${sessionId}`);
       return false;
     }
+    // 候选 conversation：精确 match 优先；否则兜底历史 match
+    const exact = [];
+    const historical = [];
     for (const [convId, entry] of this.mapper.entries()) {
-      if (!entry || entry.activeSessionId !== sessionId) continue;
-      const webhook = this.mapper.getWebhook(convId);
-      if (!webhook) {
-        this.log(`[push] conv=${convId} 无持久 webhook（该会话尚未给过回调），跳过主动推送`);
-        return false;
+      if (!entry) continue;
+      if (entry.activeSessionId === sessionId) {
+        exact.push(convId);
+      } else if (entry.sessions && Object.prototype.hasOwnProperty.call(entry.sessions, sessionId)) {
+        historical.push(convId);
       }
-      // 用持久 webhook 构造最小 msg（dingtalk.reply 只认 sessionWebhook）
-      const msg = { conversationId: convId, sessionWebhook: webhook };
-      const body = this._formatActivePush(text);
-      this._replyText(msg, body).catch((err) => {
-        this.log(`[push] 主动推送失败 conv=${convId}: ${err?.message || err}`);
-      });
-      return true;
     }
-    return false;
+    const candidates = exact.length > 0 ? exact : historical;
+    // 仅当唯一目标明确时才推（避免群聊/多会话歧义）
+    if (candidates.length === 0) return false;
+    if (candidates.length > 1) {
+      this.log(`[push] 多个 conversation 可匹配 session=${sessionId}（${candidates.length}个），跳过避免误推`);
+      return false;
+    }
+    const convId = candidates[0];
+    const webhook = this.mapper.getWebhook(convId);
+    if (!webhook) {
+      this.log(`[push] conv=${convId} 无持久 webhook（该会话尚未给过回调），跳过主动推送`);
+      return false;
+    }
+    // 用持久 webhook 构造最小 msg（dingtalk.reply 只认 sessionWebhook）
+    const msg = { conversationId: convId, sessionWebhook: webhook };
+    const body = this._formatActivePush(text);
+    this._replyText(msg, body).catch((err) => {
+      this.log(`[push] 主动推送失败 conv=${convId}: ${err?.message || err}`);
+    });
+    return true;
   }
 
   /** 主动推送的文本格式化（加醒目前缀，区分于普通回复）。 */

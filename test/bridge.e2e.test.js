@@ -227,3 +227,32 @@ test('主动推送：enableActivePush=false 时跳过', () => {
   bridge.stop();
   rmSync(tmpdirName, { recursive: true, force: true });
 });
+
+test('主动推送：历史使用过该会话（非 active）也兜底推送', () => {
+  const ding = new MockDingTalk();
+  const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-hist-'));
+  const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
+  const bridge = new Bridge({ dingtalk: ding, mapper, config: mkConfig(), log: () => {} });
+  bridge._sentSeq = new Set();
+
+  const convId = `cid-pushhist-${Date.now()}`;
+  mapper.setWebhook(convId, `http://fake/${convId}`);
+  // active 指向 A 会话，但历史里包含 B 会话
+  mapper.setActive(convId, 'session-active-a');
+  const ctx = mapper.getContext(convId);
+  ctx.sessions['session-historical-b'] = { lastUsedAt: Date.now() };
+  mapper.setActive(convId, 'session-active-a'); // 重写（保持 sessions 含 B）
+
+  // B 会话产生主动消息（非 active，但历史匹配）
+  const ev = {
+    sessionId: 'session-historical-b',
+    event: { type: 'assistant/message', seq: 99003, data: { message: { content: [{ type: 'text', text: '历史会话的主动消息' }] } } },
+  };
+  bridge._handleSessionEvent(ev);
+
+  const hit = ding.replies.find((r) => r.conversationId === convId);
+  assert.ok(hit, '历史使用过的会话也应兜底推送');
+  assert.ok(hit.text.includes('历史会话的主动消息'), `内容应匹配；实际: ${JSON.stringify(hit)}`);
+  bridge.stop();
+  rmSync(tmpdirName, { recursive: true, force: true });
+});
