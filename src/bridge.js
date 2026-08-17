@@ -63,6 +63,8 @@ export class Bridge {
 
       // 记录回复目标（sessionWebhook 会随时间/会话变化，取最新）
       this.replyTargets.set(convId, msg);
+      // 持久化投递 webhook，供「主动推送」使用（DSH 主动/定时消息 → 钉钉）
+      if (msg?.sessionWebhook) this.mapper.setWebhook(convId, msg.sessionWebhook);
 
       // 群聊里只响应 at 机器人的消息（可选策略；单聊总是响应）
       if (this._shouldIgnore(msg)) {
@@ -396,18 +398,63 @@ export class Bridge {
     const text = assistantText(event);
     this.log(`[reply] assistant/message session=${sessionId} seq=${event?.seq} 文本长度=${text.length}`);
     if (!text) return;
-    const target = this.replyTargets.get(sessionId);
-    if (!target) {
-      this.log(`[reply] 无回复目标(sessionId=${sessionId})，忽略`);
-      return;
-    }
-    // 主动回发（去重由事件流 seq 与 AI 强调单次消息保证；额外加个已回发集合防抖）
+
+    // 去重：同一条 seq 只投递一次（避免事件重放/桥接器重连导致重复推送）
     if (this._sentSeq.has(event.seq)) return;
     this._sentSeq.add(event.seq);
+
+    const target = this.replyTargets.get(sessionId);
+    if (!target) {
+      // 没有「当前正在等回复」的钉钉消息 —— 这是 DSH 主动产生的消息
+      // （schedule 定时提醒、Agent 主动输出、或经其他通道触发的回复）。
+      // 走「主动推送」：反查哪个钉钉会话把该 DSH 会话设为投递目标，用持久 webhook 推过去。
+      const pushed = this._tryActivePush(sessionId, text);
+      if (pushed) {
+        this.log(`[reply] 主动推送 session=${sessionId} seq=${event?.seq} 文本长度=${text.length}`);
+      } else {
+        this.log(`[reply] 无回复目标(sessionId=${sessionId})，忽略`);
+      }
+      return;
+    }
     this._replyText(target, this._formatReply(text)).catch((err) => {
       this.log(`reply to dingtalk failed: ${err?.message || err}`);
     });
     this.log(`[reply] 已回发钉钉: ${JSON.stringify(this._formatReply(text)).slice(0, 60)}…`);
+  }
+
+  /**
+   * 主动推送：把 DSH 会话产生的消息推送到「把它设为投递目标」的钉钉会话。
+   * 反查 session-mapping：遍历 mapping，找 activeSessionId === sessionId（或历史里用过它）
+   * 的 conversation，取持久 webhook 推送。返回是否推送了。
+   */
+  _tryActivePush(sessionId, text) {
+    if (this.config.bridge?.enableActivePush === false) {
+      this.log(`[push] 主动推送已禁用（bridge.enableActivePush=false），跳过 session=${sessionId}`);
+      return false;
+    }
+    for (const [convId, entry] of this.mapper.entries()) {
+      if (!entry || entry.activeSessionId !== sessionId) continue;
+      const webhook = this.mapper.getWebhook(convId);
+      if (!webhook) {
+        this.log(`[push] conv=${convId} 无持久 webhook（该会话尚未给过回调），跳过主动推送`);
+        return false;
+      }
+      // 用持久 webhook 构造最小 msg（dingtalk.reply 只认 sessionWebhook）
+      const msg = { conversationId: convId, sessionWebhook: webhook };
+      const body = this._formatActivePush(text);
+      this._replyText(msg, body).catch((err) => {
+        this.log(`[push] 主动推送失败 conv=${convId}: ${err?.message || err}`);
+      });
+      return true;
+    }
+    return false;
+  }
+
+  /** 主动推送的文本格式化（加醒目前缀，区分于普通回复）。 */
+  _formatActivePush(text) {
+    const pushed = this.config.bridge?.activePushPrefix || '📨 来自 Agent 的主动消息';
+    const cleaned = this._collapseBlankLines(text);
+    return `${pushed}\n${cleaned}`;
   }
 
   _sentSeq = new Set();

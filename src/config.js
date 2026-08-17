@@ -88,6 +88,10 @@ export function getConfig() {
       maxBlankLines: 2,
       /** 是否在回复头部附带"[DSH]"前缀 */
       replyPrefix: pick('REPLY_PREFIX', 'bridge.replyPrefix', ''),
+      /** 是否启用主动推送（DSH 主动/定时消息 → 钉钉）。默认开启；设为 false 可关。 */
+      enableActivePush: pick('ENABLE_ACTIVE_PUSH', 'bridge.enableActivePush', 'true') !== 'false',
+      /** 主动推送消息的醒目前缀 */
+      activePushPrefix: pick('ACTIVE_PUSH_PREFIX', 'bridge.activePushPrefix', '📨 Agent 主动消息'),
     },
     log: {
       level: pick('LOG_LEVEL', 'log.level', 'info'),

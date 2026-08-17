@@ -167,3 +167,63 @@ test('群聊 @ 过滤逻辑', () => {
   assert.equal(bridge._shouldIgnore({ conversationType: '2', msgtype: 'text', text: { content: '今天天气' }, robotCode: 'rc-bot' }), true);
   assert.equal(bridge._extractText({ msgtype: 'text', text: { content: '@我的机器人 你好' } }), '你好');
 });
+
+test('主动推送：DSH 无回复目标的 assistant 消息 → 钉钉（持久 webhook）', () => {
+  const ding = new MockDingTalk();
+  const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-'));
+  const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
+  const bridge = new Bridge({ dingtalk: ding, mapper, config: mkConfig(), log: () => {} });
+  bridge._sentSeq = new Set(); // 独立去重集合，避免跨测试干扰
+
+  // 1. 先有钉钉会话（持久 webhook + active 投递目标为该 DSH 会话）
+  const convId = `cid-push-${Date.now()}`;
+  const webhookVal = `http://fake-webhook/${convId}`;
+  mapper.setWebhook(convId, webhookVal);
+  mapper.setActive(convId, 'session-push-target');
+
+  // 2. 来自 DSH 的 assistant/message（无 replyTarget —— 模拟定时/主动推送）
+  const ev = {
+    sessionId: 'session-push-target',
+    event: {
+      type: 'assistant/message',
+      seq: 99001,
+      data: { message: { content: [{ type: 'text', text: '⏰ 这是定时提醒内容' }] } },
+    },
+  };
+  bridge._handleSessionEvent(ev);
+
+  // 3. 验证通过持久 webhook 推送到了钉钉
+  assert.ok(mapper.getWebhook(convId) === webhookVal, 'webhook 应已持久化');
+  const hit = ding.replies.find((r) => r.conversationId === convId);
+  assert.ok(hit, '应主动推送到钉钉');
+  assert.ok(hit.text.includes('定时提醒内容'), `内容应含提醒文本；实际: ${JSON.stringify(hit)}`);
+  assert.ok(hit.text.includes('Agent 主动消息') || hit.text.includes('来自 Agent'), `应有主动推送前缀；实际: ${JSON.stringify(hit)}`);
+
+  bridge.stop();
+  rmSync(tmpdirName, { recursive: true, force: true });
+});
+
+test('主动推送：enableActivePush=false 时跳过', () => {
+  const ding = new MockDingTalk();
+  const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-off-'));
+  const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
+  const cfg = mkConfig();
+  cfg.bridge.enableActivePush = false;
+  const bridge = new Bridge({ dingtalk: ding, mapper, config: cfg, log: () => {} });
+  bridge._sentSeq = new Set();
+
+  const convId = `cid-pushoff-${Date.now()}`;
+  mapper.setWebhook(convId, `http://fake/${convId}`);
+  mapper.setActive(convId, 'session-push-off');
+
+  const ev = {
+    sessionId: 'session-push-off',
+    event: { type: 'assistant/message', seq: 99002, data: { message: { content: [{ type: 'text', text: '不应推送' }] } } },
+  };
+  bridge._handleSessionEvent(ev);
+
+  const hit = ding.replies.find((r) => r.conversationId === convId);
+  assert.ok(!hit, '禁用后不应推送');
+  bridge.stop();
+  rmSync(tmpdirName, { recursive: true, force: true });
+});

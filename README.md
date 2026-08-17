@@ -13,8 +13,9 @@ status: active
 
 | 插件 | 说明 | 形态 |
 | --- | --- | --- |
-| **钉钉桥接器** (dsh-dingtalk-bridge) | 在钉钉里直接和 DSH Agent 对话，含会话管理控制台 | 独立进程 ↔ DSH `/api` |
+| **钉钉桥接器** (dsh-dingtalk-bridge) | 在钉钉里直接和 DSH Agent 对话，含会话管理控制台、**主动推送**（定时提醒→钉钉） | 独立进程 ↔ DSH `/api` |
 | **MiniMax 网页搜索** (minimax-search) | 把 MiniMax 搜索注册为 DSH 宿主 Web 搜索 provider，`web_search` 工具直接可用 | DSH 宿主插件 (`cordis.patch.yml`) |
+| **官方定时调度** (dsh-schedule) | 启用 DSH 官方持久定时任务（`schedule_create`/`list`/`delete`，after/at/every），到期唤醒 Agent | DSH 宿主插件 (`cordis.patch.yml`) |
 
 > 以后开发的新插件都放这里（详情见 [插件生态导览](docs/PLUGIN-ECOSYSTEM.md)）。
 
@@ -26,6 +27,7 @@ status: active
 | --- | --- | --- |
 | 1 | 钉钉桥接器 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) 部署 · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 架构 |
 | 2 | MiniMax 搜索 | [docs/MINIMAX-SEARCH.md](docs/MINIMAX-SEARCH.md) 一键接入 |
+| 3 | 官方定时调度 | [docs/DSH-NOTES.md](docs/DSH-NOTES.md) 宿主机制 · `cordis.patch.yml` 已启用 |
 | — | 脚手架/方法论 | [docs/PLUGIN-ECOSYSTEM.md](docs/PLUGIN-ECOSYSTEM.md) · [docs/DSH-NOTES.md](docs/DSH-NOTES.md) |
 
 ---
@@ -83,6 +85,15 @@ npm start
 
 - 每个钉钉会话（单聊/群聊）对应一个「投递目标」DSH 会话，映射持久化到 `data/session-mapping.json`（**不入库**）。
 - `/use` 切换后原会话保留，切回可续聊；新会话默认独立上下文。
+
+### 主动推送（定时提醒 → 钉钉）
+
+DSH 会话产生**非用户触发的消息**（官方 `dsh-schedule` 定时提醒到期、Agent 主动输出）时，
+桥接器会把它推到将该会话设为投递目标的钉钉会话（`📨 Agent 主动消息` 前缀）。
+
+- 前提：该钉钉用户**先给机器人发过消息**（持久化其 `sessionWebhook`）。
+- 配置：`ENABLE_ACTIVE_PUSH=true`（默认开）· `ACTIVE_PUSH_PREFIX=📨 Agent 主动消息`。
+- 链路：`定时到期 → Agent 输出 → 事件流捕获 → 持久 webhook → 钉钉`。
 
 ---
 

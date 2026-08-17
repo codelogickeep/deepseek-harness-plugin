@@ -153,23 +153,28 @@ cordis_run            → 注入运行
 ② DSH 的 assistant 回复事件 → 回发
 ```
 
-**没有任何「无条件主动推送」**。DSH/Agent 自己不能主动往钉钉塞消息。
+**桥接器现在支持「主动推送」**（实现于 2026-08）：DSH 会话产生**非用户触发的 assistant 消息**
+（如官方 `dsh-schedule` 定时提醒到期、Agent 主动输出）时，桥接器会把它推到
+「将该 DSH 会话设为投递目标」的钉钉会话。
 
-### 想支持主动推送，有三种做法（都可行，复杂度递增）
+### 主动推送的三种做法（A 已实现，B/C 可选）
 
-| 做法 | 说明 | 前提 |
-| --- | --- | --- |
-| **A. sessionWebhook 复用** | 把钉钉某会话最近一次消息携带的 `sessionWebhook` 缓存下来（`.json`），之后任何触发点（定时器、DSH 事件、其它插件）都可 POST 到它来主动发消息 | 该用户**必须先给机器人发过至少一条消息**（才有 webhook）；webhook 有时效/会话限制 |
-| **B. batchSend API** | 用 `access_token` + `robot/oToMessages/batchSend` + 目标用户 `userId` 主动推单聊 | 需要目标用户 userId；应用有对应权限 |
-| **C. 群机器人 Webhook** | 若用「自定义群机器人」而非「企业内部应用」机器人，可拿固定 webhook 主动推送到群 | 换机器人形态，与现有 Stream 模式不同 |
+| 做法 | 说明 | 前提 | 状态 |
+| --- | --- | --- | --- |
+| **A. sessionWebhook 复用** | 缓存钉钉会话最近一次的 `sessionWebhook`（持久化到 `data/session-mapping.json`），DSH 主动消息到来时 POST 到它 | 该用户**必须先给机器人发过至少一条消息**（才有 webhook） | ✅ **已实现**（`bridge.enableActivePush`，默认开） |
+| **B. batchSend API** | 用 `access_token` + `robot/oToMessages/batchSend` + 目标用户 `userId` 主动推单聊 | 需要目标用户 userId；应用有对应权限 | 可选扩展 |
+| **C. 群机器人 Webhook** | 若用「自定义群机器人」而非「企业内部应用」机器人，可拿固定 webhook 主动推送到群 | 换机器人形态，与现有 Stream 模式不同 | 可选扩展 |
 
 ### 触发源从哪来
-「主动」不等于「自己凭空说话」，需要一个触发源，例如：
-- **定时**：`setInterval` / cron（如每天 9 点发日报）
-- **DSH 事件**：监听 DSH 事件流里的某种状态变化（如任务完成、会话结束）
-- **其它服务**：外部程序调用桥接器暴露的 HTTP 接口来触发推送
+「主动」不等于「自己凭空说话」，需要一个触发源。当前已接通的触发源：
+- **DSH 事件（已实现）**：桥接器监听 DSH 事件流里的 `assistant/message`，无当前钉钉回复上下文时走主动推送。
+- **官方定时（已启用）**：宿主加载 `@deepseek-ai/dsh-schedule` —— Agent 用
+  `schedule_create`（after/at/every）设持久提醒，到期唤醒 Agent 输出，再经上述主动推送送到钉钉。
+- **其它服务（可扩展）**：外部程序调用桥接器接口来触发推送。
 
-> 结论：**DSH 自身不能主动「想到」就发**，但**桥接器完全可以做成「有触发就主动推」**——定时、事件、接口都是可行触发源。这属于 A 类能力的扩展。
+> 链路：`dsh-schedule 定时到期 → DSH Agent 输出提醒文本 → 桥接器事件流捕获 → 持久 webhook 推到钉钉`
+> 限制：持久 webhook 来自「该会话最近一次回调」，用户需先给机器人发过消息；webhook 可能有时效。
+> 群聊推送需谨慎（可能打扰），可用 `bridge.enableActivePush=false` 关闭。
 
 ---
 

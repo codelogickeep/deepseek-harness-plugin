@@ -7,6 +7,9 @@
  *   - activeSessionId: 当前投递目标（/use 切换、/new 新建后更新）
  *   - sessions: 该钉钉会话用过的 DSH 会话历史（keys = dshSessionId）
  *     —— 让 /use 切回原会话时能续聊（DSH 持久化历史仍在）
+ *   - webhook: 该钉钉会话的投递 webhook（sessionWebhook，来自最近一次回调）
+ *     —— 用于「主动推送」：DSH 会话产生非用户触发消息（如 schedule 定时提醒、
+ *        Agent 主动消息）时，无需新回调即可把内容推回该钉钉会话
  *
  * 映射持久化到 data/session-mapping.json，重启后恢复。
  * 兼容旧格式 { dshSessionId, createdAt }：加载时自动迁移到新结构。
@@ -24,7 +27,7 @@ export class SessionMapper {
   constructor(opts) {
     this.file = opts.file;
     this.log = opts.log || ((line) => console.log(`[mapping] ${line}`));
-    /** conversationId -> { activeSessionId, sessions: Record<dshSessionId, {lastUsedAt}> } */
+    /** conversationId -> { activeSessionId, sessions: Record<dshSessionId, {lastUsedAt}>, webhook } */
     this.map = new Map();
     this._load();
   }
@@ -42,6 +45,7 @@ export class SessionMapper {
             this.map.set(k, {
               activeSessionId: v.activeSessionId,
               sessions: (v.sessions && typeof v.sessions === 'object') ? v.sessions : {},
+              webhook: typeof v.webhook === 'string' ? v.webhook : '',
             });
           } else if (v.dshSessionId) {
             // 旧版格式：迁移
@@ -49,6 +53,7 @@ export class SessionMapper {
             this.map.set(k, {
               activeSessionId: v.dshSessionId,
               sessions: { [v.dshSessionId]: { lastUsedAt: v.createdAt || Date.now() } },
+              webhook: '',
             });
           }
         }
@@ -120,5 +125,25 @@ export class SessionMapper {
   /** 列出所有映射。 */
   entries() {
     return [...this.map.entries()];
+  }
+
+  /** 记录/更新该钉钉会话的投递 webhook（来自最近一次回调的 sessionWebhook）。 */
+  setWebhook(conversationId, webhook) {
+    if (!webhook) return;
+    let entry = this.map.get(conversationId);
+    if (!entry) {
+      entry = { activeSessionId: null, sessions: {}, webhook: '' };
+      this.map.set(conversationId, entry);
+    }
+    if (entry.webhook !== webhook) {
+      entry.webhook = webhook;
+      this._save();
+      this.log(`setWebhook ${conversationId} -> ${webhook.slice(0, 40)}…`);
+    }
+  }
+
+  /** 获取该钉钉会话的投递 webhook（无则 ''）。 */
+  getWebhook(conversationId) {
+    return this.map.get(conversationId)?.webhook || '';
   }
 }
