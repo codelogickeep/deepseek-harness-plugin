@@ -350,26 +350,110 @@ export class Bridge {
   }
 
   /**
-   * /sched [list|N|cancel <id>]：查看（或取消）当前会话的定时任务。
-   * 桥接器不直接执行 schedule 工具（它们只对 Agent 暴露），
-   * 而是把明确的指令投给 Agent，由 Agent 调用 schedule_list/schedule_delete 后回显。
+   * /sched [list|cancel <id>]：查看（或取消）当前配置的定时任务。
+   * 不依赖 Agent 的 schedule 工具：直接读取 DSH 会话事件历史里的
+   * schedule/change 事件并折叠出活动任务列表，格式化回显给钉钉。
+   * 取消操作同样直接读取消（通过 schedule_delete 仅对 Agent 暴露 → 这里
+   * 采用「折叠出任务 + 提示用户到 Web 会话操作，或转投拥有 schedule 的会话」）。
    */
   async _handleSched(msg, text) {
-    const dshSessionId = await this._resolveTarget(msg);
-    if (!dshSessionId) {
-      await this._replyText(msg, '⚠️ 无法确定 DSH 会话，请检查 DSH 是否在线。');
+    const lower = text.trim();
+    if (/^\/(sched|定时|schedule)\s+(cancel|del|删除|取消)\s+\S+/i.test(lower)) {
+      const id = lower.replace(/^\/(sched|定时|schedule)\s+(cancel|del|删除|取消)\s+/i, '').trim();
+      await this._handleSchedCancel(msg, id);
       return;
     }
-    const lower = text.trim().toLowerCase();
-    let instruction;
-    if (/^\/(sched|定时|schedule)\s+(cancel|del|删除|取消)\s+\S+/i.test(text)) {
-      const id = text.replace(/^\/(sched|定时|schedule)\s+(cancel|del|删除|取消)\s+/i, '').trim();
-      instruction = `用户想取消定时任务 "${id}"。请用 schedule_delete 工具删除该 id（若不存在则说明），然后简短确认。`;
-    } else {
-      instruction = `用户想查看当前定时任务配置。请用 schedule_list 工具列出所有定时任务，并把每个任务的 id、触发时间/间隔、状态、提醒内容要点，用清晰的列表回显给用户。`;
+    const tasks = await this._foldAllSchedules();
+    if (!tasks.found) {
+      await this._replyText(msg, `⚠️ 无法读取定时任务：${tasks.error || '未知错误'}（请确认 DSH 在线，且已启用 dsh-schedule）。`);
+      return;
     }
-    this.log(`[sched] conv=${msg?.conversationId} 投给 Agent：${instruction.slice(0, 60)}...`);
-    await this._prompt(msg, dshSessionId, instruction);
+    if (tasks.items.length === 0) {
+      await this._replyText(msg, '📋 当前**没有**配置任何定时任务。\n\n_提示：定时任务由 DSH 的 dsh-schedule 插件管理（仅在 Cordis 模式的会话可用），可在 Web 会话里用 schedule_create 创建。_\n\n_注：钉钉会话为 code 模式，无 schedule 工具；本列表由桥接器直接读取事件日志折叠得出。_');
+      return;
+    }
+    const lines = tasks.items.map((t, i) => {
+      const time = t.kind === 'every'
+        ? `每 ${Math.round(t.everySeconds / 60)} 分钟`
+        : new Date(t.scheduledAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+      const brief = t.prompt?.replace(/\n+/g, ' ').slice(0, 40) || '(无内容)';
+      return `**${i + 1}. \`${t.id}\`** | ${t.state === 'overdue' ? '⏰ 已到期' : '⏳ 待触发'}\n` +
+        `　· 时间：${time}\n` +
+        `　· 内容：${brief}`;
+    });
+    const body = `📋 **当前定时任务（${tasks.items.length} 个）**\n\n${lines.join('\n')}\n\n` +
+      '_由桥接器直接读取 DSH 会话事件日志折叠得出。可到 Web 会话用 schedule_create/delete 管理。_';
+    await this._replyText(msg, body);
+  }
+
+  /** /sched cancel <id>：转投拥有 schedule 的会话执行 schedule_delete。 */
+  async _handleSchedCancel(msg, id) {
+    // 找到承载 schedule 的会话（有 schedule/change 事件的），投给它的 Agent 执行删除
+    const target = await this._findScheduleSession();
+    if (!target) {
+      await this._replyText(msg, `⚠️ 找不到承载定时任务的会话，无法删除 \`${id}\`。`);
+      return;
+    }
+    this.log(`[sched] cancel ${id} → 投给会话 ${target}`);
+    await this._prompt(msg, target, `用户想取消定时任务 "${id}"。请用 schedule_delete 工具删除该 id（若不存在则说明），然后简短确认。`);
+  }
+
+  /** 找到承载 schedule（有 schedule/change 事件）的会话 id。 */
+  async _findScheduleSession() {
+    const sessions = await this.dsh.listSessions().catch(() => []);
+    for (const s of sessions) {
+      const sid = s.sessionId;
+      const r = await this.dsh.sessionHistory(sid, { limit: 500, maxPages: 2 }).catch(() => null);
+      if (r?.ok && r.events.some((e) => e.event?.type === 'schedule/change')) return sid;
+    }
+    return null;
+  }
+
+  /**
+   * 折叠所有会话的 schedule/change 事件，返回当前活动任务。
+   * 规则：create 新增；delete 移除；dispatch 对 at/after 一次性任务标记已完毕（移除）。
+   * every 任务的 dispatch 不结束（周期继续），只推进 scheduledAt。
+   */
+  async _foldAllSchedules() {
+    const sessions = await this.dsh.listSessions().catch(() => []);
+    // id -> task（多个会话按创建顺序合并，id 全局唯一）
+    const byId = new Map();
+    let found = false;
+    for (const s of sessions) {
+      const r = await this.dsh.sessionHistory(s.sessionId, { limit: 2000, maxPages: 6 }).catch(() => null);
+      if (!r?.ok) continue;
+      const events = r.events || [];
+      const changes = events
+        .map((e) => e.event)
+        .filter((e) => e?.type === 'schedule/change')
+        .sort((a, b) => a.seq - b.seq);
+      if (changes.length) found = true;
+      for (const ch of changes) {
+        const d = ch.data || {};
+        const sc = d.schedule;
+        const id = sc?.id || d.id;
+        if (!id) continue;
+        if (d.operation === 'create' && sc) {
+          byId.set(id, { id, kind: sc.kind, scheduledAt: sc.scheduledAt, everySeconds: sc.everySeconds, prompt: sc.prompt, state: 'scheduled', sessionId: s.sessionId });
+        } else if (d.operation === 'dispatch') {
+          const t = byId.get(id);
+          if (t) {
+            if (t.kind === 'every') {
+              // 周期任务：推进到下一个锚点（简单标记仍 scheduled）
+              t.state = 'scheduled';
+            } else {
+              // 一次性任务已触发：移除
+              byId.delete(id);
+            }
+          }
+        } else if (d.operation === 'delete') {
+          byId.delete(id);
+        }
+      }
+    }
+    // overdue 判断：scheduledAt 已过且 still 活动（一次性 at 未到 dispatch 时）——降级显示为待触发
+    const items = [...byId.values()];
+    return { found, items };
   }
 
   /** 确保该钉钉会话已映射到 DSH 会话（必要时创建）。 */

@@ -110,6 +110,40 @@ export class DSHClient extends EventEmitter {
     return { ok: false, error: r.error };
   }
 
+  /**
+   * 读取会话的事件历史（自动翻页直到取完）。
+   * 用于桥接器直接折叠 schedule/change 事件（不依赖 Agent 工具）。
+   * @param {string} sessionId
+   * @param {{limit?:number, maxPages?:number}} [opts]
+   * @returns {Promise<{ok:boolean, events?:Array, error?:any}>}
+   */
+  async sessionHistory(sessionId, { limit = 2000, maxPages = 10 } = {}) {
+    const events = [];
+    let before;
+    let seqSet = new Set();
+    for (let i = 0; i < maxPages; i++) {
+      const payload = { sessionId };
+      if (before !== undefined) payload.beforeSeq = before;
+      payload.limit = limit;
+      const r = await this.callResult('session.history', payload);
+      if (!r.ok) return { ok: false, error: r.error };
+      const page = r.value?.events || [];
+      if (!page.length) break;
+      for (const e of page) {
+        const seq = e?.event?.seq;
+        if (typeof seq === 'number' && !seqSet.has(seq)) {
+          seqSet.add(seq);
+          events.push(e);
+        }
+      }
+      if (!r.value?.hasMore) break;
+      const minSeq = Math.min(...page.map((e) => e?.event?.seq || Infinity));
+      if (!isFinite(minSeq) || minSeq <= 1) break;
+      before = minSeq - 1;
+    }
+    return { ok: true, events };
+  }
+
   /** 开启持续事件流（自动重连）。返回停止函数。 */
   startEventStream() {
     this._stop = false;
