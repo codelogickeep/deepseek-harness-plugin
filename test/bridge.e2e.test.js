@@ -14,6 +14,7 @@ import { EventEmitter } from 'node:events';
 import { DSHClient } from '../src/dsh-client.js';
 import { SessionMapper } from '../src/sessions.js';
 import { Bridge } from '../src/bridge.js';
+import { looksLikeMarkdown } from '../src/dingtalk-client.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -138,16 +139,19 @@ test('/use 切换后保留历史（可续聊）', () => {
   rmSync(tmpdirName, { recursive: true, force: true });
 });
 
-test('指令路由：/status /list /use /new 被识别', () => {
+test('指令路由：/status /list /use /new /sched 被识别', () => {
   const ding = new MockDingTalk();
   const mapper = new SessionMapper({ file: join(tmpdir(), `map-${Date.now()}.json`), log: () => {} });
   const bridge = new Bridge({ dingtalk: ding, mapper, config: mkConfig(), log: () => {} });
   // 不真正执行（不连 DSH），只验证路由逻辑可达：
-  // status/list/use/new/help 都以 / 开头且不是普通消息
+  // status/list/use/new/help/sched 都以 / 开头且不是普通消息
   assert.equal(/^\/(status|状态)/.test('/status'), true);
   assert.equal(/^\/(list|列表)\b/.test('/list'), true);
   assert.equal(/^\/(use|切换|switch)\b/.test('/use'), true);
   assert.equal(/^\/(new|reset|clear)\b/.test('/new'), true);
+  assert.equal(/^\/(sched|定时|schedule)\b/.test('/sched'), true);
+  assert.equal(/^\/(sched|定时|schedule)\b/.test('/sched list'), true);
+  assert.equal(/^\/(sched|定时|schedule)\b/.test('/sched cancel schedule-x'), true);
   assert.equal(/^\/(status)/.test('status'), false, '无 / 前缀不是指令');
   rmSync(mapper.file, { force: true });
 });
@@ -156,6 +160,17 @@ test('_collapseBlankLines 压缩空行', () => {
   const bridge = new Bridge({ config: mkConfig(), log: () => {} });
   const out = bridge._collapseBlankLines('a\n\n\n\n\nb');
   assert.equal(out, 'a\n\n\nb');
+});
+
+test('looksLikeMarkdown 判断钉钉 markdown 渲染', () => {
+  assert.equal(looksLikeMarkdown('**加粗** 文本'), true, '**bold** 应识别');
+  assert.equal(looksLikeMarkdown('- 列表项'), true, '列表应识别');
+  assert.equal(looksLikeMarkdown('`code` 片段'), true, '行内代码应识别');
+  assert.equal(looksLikeMarkdown('# 标题'), true, '标题应识别');
+  assert.equal(looksLikeMarkdown('[链接](http://a.b)'), true, '链接应识别');
+  assert.equal(looksLikeMarkdown('纯文本消息没有md'), false, '纯文本不应识别');
+  assert.equal(looksLikeMarkdown(''), false, '空串不应识别');
+  assert.equal(looksLikeMarkdown('文本带一个 * 星号'), false, '单个星号不是 md');
 });
 
 test('群聊 @ 过滤逻辑', () => {

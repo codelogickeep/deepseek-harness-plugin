@@ -107,16 +107,18 @@ export class DingTalkClient extends EventEmitter {
   /**
    * 回复一条消息到会话。
    * 优先使用回调携带的 sessionWebhook（最可靠、无需 access_token）。
+   * 若文本包含 markdown 语法则用钉钉 markdown 消息（渲染 **加粗**、`代码`、列表、
+   * 链接、标题等），否则退回 text。
    * @param {object} msg  机器人消息负载（含 sessionWebhook）
    * @param {string} text 回复文本
    */
-  async reply(msg, text) {
+  async reply(msg, text, { forceMarkdown } = {}) {
     const webhook = msg?.sessionWebhook;
     if (!webhook) throw new Error('no sessionWebhook in message');
-    const body = {
-      msgtype: 'text',
-      text: { content: text },
-    };
+    const useMarkdown = forceMarkdown === true || looksLikeMarkdown(text);
+    const body = useMarkdown
+      ? { msgtype: 'markdown', markdown: { text } }
+      : { msgtype: 'text', text: { content: text } };
     const res = await fetch(webhook, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -128,4 +130,16 @@ export class DingTalkClient extends EventEmitter {
     }
     return res;
   }
+}
+
+/** 粗略判断文本是否包含钉钉支持的 markdown 语法。 */
+export function looksLikeMarkdown(text) {
+  if (!text) return false;
+  return (
+    /\*\*[*\s]/.test(text) ||        // **加粗**
+    /(^|\n)\s*[-*] /.test(text) ||   // 列表
+    /`[^`\n]+`/.test(text) ||        // 行内代码
+    /(^|\n)\s*#{1,4} /.test(text) || // 标题
+    /\[[^\]]+\]\([^)]+\)/.test(text) // 链接
+  );
 }

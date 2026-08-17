@@ -33,9 +33,9 @@ export class Bridge {
     this.pending = new Set();
     /** dshSessionId -> { conversationId, msg } 最近一次发送者，用于回复路由 */
     this.replyTargets = new Map();
-    /** 主动推送：候选（待稳定）与去抖定时器 */
-    this._activePushCandidate = null;
-    this._activePushTimer = null;
+    /** 统一回复/推送候选（去抖只发最终结果）与去抖定时器 */
+    this._replyCandidate = null;
+    this._replyTimer = null;
     /** 处于「定时提醒回复窗口」的 sessionId 集合（只推这些会话的主动回复） */
     this._scheduleReminderSessions = new Set();
     this._onMuxEvent = (ev) => this._handleSessionEvent(ev);
@@ -54,8 +54,8 @@ export class Bridge {
   stop() {
     this.dingtalk?.off?.('message', this._onDingMessage);
     this.dsh?.off?.('session/event', this._onMuxEvent);
-    if (this._activePushTimer) { clearTimeout(this._activePushTimer); this._activePushTimer = null; }
-    this._activePushCandidate = null;
+    if (this._replyTimer) { clearTimeout(this._replyTimer); this._replyTimer = null; }
+    this._replyCandidate = null;
     this._scheduleReminderSessions.clear();
   }
 
@@ -105,6 +105,11 @@ export class Bridge {
       }
       if (/^\/(help|帮助)\b/.test(text)) {
         await this._handleHelp(msg);
+        return;
+      }
+      // /sched [list|N]：查看当前会话的定时任务（投给 Agent，用 schedule_list 工具回显）
+      if (/^\/(sched|定时|schedule)\b/.test(text)) {
+        await this._handleSched(msg, text);
         return;
       }
 
@@ -339,8 +344,32 @@ export class Bridge {
         '  /list    列出 DSH 会话\n' +
         '  /use <序号|关键词>  切换会话（可切回续聊）\n' +
         '  /new [路径]  新建 DSH 会话\n' +
+        '  /sched   查看定时任务\n' +
         '  /help    显示本帮助',
     );
+  }
+
+  /**
+   * /sched [list|N|cancel <id>]：查看（或取消）当前会话的定时任务。
+   * 桥接器不直接执行 schedule 工具（它们只对 Agent 暴露），
+   * 而是把明确的指令投给 Agent，由 Agent 调用 schedule_list/schedule_delete 后回显。
+   */
+  async _handleSched(msg, text) {
+    const dshSessionId = await this._resolveTarget(msg);
+    if (!dshSessionId) {
+      await this._replyText(msg, '⚠️ 无法确定 DSH 会话，请检查 DSH 是否在线。');
+      return;
+    }
+    const lower = text.trim().toLowerCase();
+    let instruction;
+    if (/^\/(sched|定时|schedule)\s+(cancel|del|删除|取消)\s+\S+/i.test(text)) {
+      const id = text.replace(/^\/(sched|定时|schedule)\s+(cancel|del|删除|取消)\s+/i, '').trim();
+      instruction = `用户想取消定时任务 "${id}"。请用 schedule_delete 工具删除该 id（若不存在则说明），然后简短确认。`;
+    } else {
+      instruction = `用户想查看当前定时任务配置。请用 schedule_list 工具列出所有定时任务，并把每个任务的 id、触发时间/间隔、状态、提醒内容要点，用清晰的列表回显给用户。`;
+    }
+    this.log(`[sched] conv=${msg?.conversationId} 投给 Agent：${instruction.slice(0, 60)}...`);
+    await this._prompt(msg, dshSessionId, instruction);
   }
 
   /** 确保该钉钉会话已映射到 DSH 会话（必要时创建）。 */
@@ -429,20 +458,59 @@ export class Bridge {
     if (this._sentSeq.has(event.seq)) return;
     this._sentSeq.add(event.seq);
 
+    // 会话的所有输出统一走「候选 → 去抖 → 只发最终一条」：
+    // 1) 有 replyTarget（用户消息触发的回复）→ 回发该钉钉会话，回发后消费删除 target
+    // 2) 无 replyTarget 且在提醒窗口内 → 主动推送（持久 webhook）
+    // 以此避免中间步骤（思考、工具调用间的输出）被逐条发到钉钉。
     const target = this.replyTargets.get(sessionId);
-    if (!target) {
-      // 没有「当前正在等回复」的钉钉消息 —— 这是 DSH 主动产生的消息
-      // （schedule 定时提醒、Agent 主动输出、或经其他通道触发的回复）。
-      // 走「主动推送」，但只推「最终结果」：把本条设为候选并延迟去抖，
-      // 若后续还有输出（新的 assistant/message 或 tool/call）则替换候选，
-      // 安静一段时间后才真正推送（此时即最终结果）。
-      this._setActivePushCandidate(sessionId, event.seq, text);
+    this._setReplyCandidate(sessionId, event.seq, text, target);
+  }
+
+  /**
+   * 统一回复候选与去抖（对回复路径和主动推送路径共用）。
+   * 收到 assistant/message → 设为候选并重置去抖定时器；
+   * 后续 tool/call / step/start 等继续输出则替换候选并续期；
+   * 去抖到期（安静窗口）后只发候选（= 最终结果）。
+   * 主动推送路径仅在该会话处于「定时提醒回复窗口」时才设候选（只推定时提醒触发的回复）。
+   */
+  _setReplyCandidate(sessionId, seq, text, target) {
+    if (!target && !this._scheduleReminderSessions.has(sessionId)) {
+      this.log(`[push] session=${sessionId} 不在提醒窗口内，跳过主动推送（只推定时提醒触发）`);
       return;
     }
-    this._replyText(target, this._formatReply(text)).catch((err) => {
-      this.log(`reply to dingtalk failed: ${err?.message || err}`);
-    });
-    this.log(`[reply] 已回发钉钉: ${JSON.stringify(this._formatReply(text)).slice(0, 60)}…`);
+    this._replyCandidate = { sessionId, seq, text, target };
+    this.log(`[reply] 候选 session=${sessionId} seq=${seq} target=${target ? '有(replyTarget)' : '无'}（等待稳定后发最终结果）`);
+    this._resetReplyTimer();
+  }
+
+  _resetReplyTimer() {
+    if (this._replyTimer) { clearTimeout(this._replyTimer); this._replyTimer = null; }
+    const quiet = Number(this.config.bridge?.activePushQuietMs) || 2500;
+    this._replyTimer = setTimeout(() => {
+      this._replyTimer = null;
+      const cand = this._replyCandidate;
+      this._replyCandidate = null;
+      if (!cand) return;
+      const from = cand.target ? '钉钉消息回复' : '主动推送';
+      this.log(`[reply] 最终结果稳定 session=${cand.sessionId} seq=${cand.seq} (${from}) 文本长度=${cand.text.length}`);
+      if (cand.target) {
+        // 回复路径：回发一次并消费该 replyTarget（一条用户消息 → 一条回复）
+        this.replyTargets.delete(cand.sessionId);
+        this._replyText(cand.target, this._formatReply(cand.text)).catch((err) => {
+          this.log(`reply to dingtalk failed: ${err?.message || err}`);
+        });
+        this.log(`[reply] 已回发钉钉: ${JSON.stringify(this._formatReply(cand.text)).slice(0, 60)}…`);
+      } else {
+        const pushed = this._tryActivePush(cand.sessionId, cand.text);
+        if (pushed) {
+          this.log(`[push] 已主动推送 session=${cand.sessionId} seq=${cand.seq}`);
+          // 一个提醒只推一条：推送后关闭该会话的提醒窗口
+          this._scheduleReminderSessions.delete(cand.sessionId);
+        } else {
+          this.log(`[push] 推送失败/无目标 session=${cand.sessionId} seq=${cand.seq}`);
+        }
+      }
+    }, quiet);
   }
 
   /**
@@ -460,50 +528,15 @@ export class Bridge {
   }
 
   /**
-   * 主动推送的候选与去抖：仅对「定时提醒触发的回复」启用。
-   * - 只有 sessionId 处于提醒回复窗口（收到过 [SCHEDULE REMINDER]）时才设候选
-   * - 收到 assistant/message → 设为候选；后续 tool/call 等续期去抖
-   * - 去抖到期 → 推送最终结果，并关闭该会话的提醒窗口（一个提醒只推一条）
+   * 每次「可能继续输出」的事件到来都续期去抖定时器。
+   * 覆盖 assistant/message、tool/*、step/*、agent/status。
    */
-  _setActivePushCandidate(sessionId, seq, text) {
-    if (!this._scheduleReminderSessions.has(sessionId)) {
-      this.log(`[push] session=${sessionId} 不在提醒窗口内，跳过主动推送（只推定时提醒触发）`);
-      return;
-    }
-    this.log(`[push] 候选 session=${sessionId} seq=${seq}（等待稳定后再推）`);
-    this._activePushCandidate = { sessionId, seq, text, hash: `${sessionId}:${seq}` };
-    this._resetActivePushTimer();
-  }
-
-  /** 每次主动推送相关事件到来都「续期」去抖定时器。 */
   _trackActivePushActivity(sessionId, event) {
-    // 只对「可能继续输出的」事件续期：assistant/message、tool/*、step/*
     const t = event?.type || '';
     if (!/^(assistant\/message|tool\/|step\/|agent\/status)/.test(t)) return;
-    if (!this._activePushCandidate) return;
-    if (this._activePushCandidate.sessionId !== sessionId) return;
-    this._resetActivePushTimer();
-  }
-
-  _resetActivePushTimer() {
-    if (this._activePushTimer) { clearTimeout(this._activePushTimer); this._activePushTimer = null; }
-    // 静默窗口：默认 2.5s。此时长内无新输出视为「最终结果」。
-    const quiet = Number(this.config.bridge?.activePushQuietMs) || 2500;
-    this._activePushTimer = setTimeout(() => {
-      this._activePushTimer = null;
-      const cand = this._activePushCandidate;
-      this._activePushCandidate = null;
-      if (!cand) return;
-      this.log(`[push] 最终结果稳定 candidate session=${cand.sessionId} seq=${cand.seq} 文本长度=${cand.text.length}`);
-      const pushed = this._tryActivePush(cand.sessionId, cand.text);
-      if (pushed) {
-        this.log(`[push] 已主动推送 session=${cand.sessionId} seq=${cand.seq}`);
-        // 一个提醒只推一条：推送后关闭该会话的提醒窗口
-        this._scheduleReminderSessions.delete(cand.sessionId);
-      } else {
-        this.log(`[push] 推送失败/无目标 session=${cand.sessionId} seq=${cand.seq}`);
-      }
-    }, quiet);
+    if (!this._replyCandidate) return;
+    if (this._replyCandidate.sessionId !== sessionId) return;
+    this._resetReplyTimer();
   }
 
   /**
