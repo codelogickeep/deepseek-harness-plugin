@@ -90,8 +90,8 @@ export function getConfig() {
       replyPrefix: pick('REPLY_PREFIX', 'bridge.replyPrefix', ''),
       /** 是否启用主动推送（DSH 主动/定时消息 → 钉钉）。默认开启；设为 false 可关。 */
       enableActivePush: pick('ENABLE_ACTIVE_PUSH', 'bridge.enableActivePush', 'true') !== 'false',
-      /** 主动推送消息的醒目前缀 */
-      activePushPrefix: pick('ACTIVE_PUSH_PREFIX', 'bridge.activePushPrefix', '📨 Agent 主动消息'),
+      /** 主动推送消息的醒目前缀（默认空：推纯内容，不加额外信息） */
+      activePushPrefix: pick('ACTIVE_PUSH_PREFIX', 'bridge.activePushPrefix', ''),
       /** 主动推送「只推最终结果」的静默窗口（ms）：窗口内无新输出即视为最终结果 */
       activePushQuietMs: pick('ACTIVE_PUSH_QUIET_MS', 'bridge.activePushQuietMs', '2500'),
     },

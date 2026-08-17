@@ -241,7 +241,7 @@ test('主动推送：DSH 无回复目标的 assistant 消息 → 钉钉（持久
   const hit = ding.replies.find((r) => r.conversationId === convId);
   assert.ok(hit, '应主动推送到钉钉');
   assert.ok(hit.text.includes('定时提醒内容'), `内容应含提醒文本；实际: ${JSON.stringify(hit)}`);
-  assert.ok(hit.text.includes('Agent 主动消息') || hit.text.includes('来自 Agent'), `应有主动推送前缀；实际: ${JSON.stringify(hit)}`);
+  assert.ok(!hit.text.includes('Agent 主动消息') && !hit.text.includes('来自 Agent'), `推送不应带额外前缀（纯内容）；实际: ${JSON.stringify(hit)}`);
 
   bridge.stop();
   rmSync(tmpdirName, { recursive: true, force: true });

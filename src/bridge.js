@@ -369,7 +369,7 @@ export class Bridge {
       return;
     }
     if (tasks.items.length === 0) {
-      await this._replyText(msg, '📋 当前**没有**配置任何定时任务。\n\n_提示：定时任务由 DSH 的 dsh-schedule 插件管理（仅在 Cordis 模式的会话可用），可在 Web 会话里用 schedule_create 创建。_\n\n_注：钉钉会话为 code 模式，无 schedule 工具；本列表由桥接器直接读取事件日志折叠得出。_');
+      await this._replyText(msg, '📋 当前没有配置任何定时任务。');
       return;
     }
     const lines = tasks.items.map((t, i) => {
@@ -381,8 +381,7 @@ export class Bridge {
         `　· 时间：${time}\n` +
         `　· 内容：${brief}`;
     });
-    const body = `📋 **当前定时任务（${tasks.items.length} 个）**\n\n${lines.join('\n')}\n\n` +
-      '_由桥接器直接读取 DSH 会话事件日志折叠得出。可到 Web 会话用 schedule_create/delete 管理。_';
+    const body = `📋 **当前定时任务（${tasks.items.length} 个）**\n\n${lines.join('\n')}`;
     await this._replyText(msg, body);
   }
 
@@ -667,9 +666,10 @@ export class Bridge {
 
   /** 主动推送的文本格式化（加醒目前缀，区分于普通回复）。 */
   _formatActivePush(text) {
-    const pushed = this.config.bridge?.activePushPrefix || '📨 来自 Agent 的主动消息';
+    // 按用户要求：推纯内容，不加前缀（除非显式配置了 activePushPrefix）
+    const pushed = this.config.bridge?.activePushPrefix || '';
     const cleaned = this._collapseBlankLines(text);
-    return `${pushed}\n${cleaned}`;
+    return pushed ? `${pushed}\n${cleaned}` : cleaned;
   }
 
   _sentSeq = new Set();
