@@ -28,10 +28,10 @@ Body:    { "q": "查询词" }
 
 接入动作三件套（都在 DSH 宿主侧）：
 
-| # | 文件 | 作用 |
+| # | 文件（仓库 `deepseek-harness-plugin`） | 作用 |
 |---|---|---|
-| 1 | `~/.dsh/profiles/web/plugins/minimax-search.mjs` | 自定义插件：注册 `WebSearchProvider` |
-| 2 | `~/.dsh/profiles/web/cordis.patch.yml` | 停用内置 DeepSeek + 把 `web.searchProvider` 指向 `minimax` + 插入插件行 |
+| 1 | `plugins/minimax-search/minimax-search.mjs` | 插件源码（**仓库唯一真相源**）→ 脚手架同步到宿主 |
+| 2 | 宿主 `~/.dsh/profiles/web/cordis.patch.yml` | 停用内置 DeepSeek + 把 `web.searchProvider` 指向 `minimax` + 插入插件行 |
 | 3 | `~/.dsh/.env` | 存放 `MINIMAX_API_KEY`（DSH 启动自动读） |
 
 ---
@@ -61,11 +61,28 @@ curl -s -X POST 'https://api.minimaxi.com/v1/coding_plan/search' \
 
 期望：`organic 条数: >=1`。（否则 key 无效或区域不对，换 `api.minimax.io`。）
 
-### 第 2 步：写插件文件
+### 第 2 步：用脚手架安装插件（仓库 → 宿主）
 
-创建 `~/.dsh/profiles/web/plugins/minimax-search.mjs`（内容见 [附录 A](#附录-a插件-源码模板)）。
+插件源码在本仓库 `plugins/minimax-search/minimax-search.mjs`，**仓库是唯一真相源**。
+用脚手架脚本同步到 DSH 宿主（不需要手动写宿主文件）：
 
-要点：
+```bash
+cd deepseek-harness-plugin        # 本仓库根目录
+npm run install:plugins           # 同步 plugins/ → ~/.dsh/profiles/web/plugins/
+# 若要装到别的 profile：DSH_PROFILE=tui npm run install:plugins
+```
+
+预期输出：
+
+```
+✅ 安装插件 [minimax-search] → /Users/.../.dsh/profiles/web/plugins/ (minimax-search.mjs)
+已完成：共安装 1 个文件。
+```
+
+> 之后每次改 `plugins/minimax-search/` 里的源码，重跑一次 `npm run install:plugins` 即可。
+> 脚手架脚本见 [scripts/install-plugins.mjs](../scripts/install-plugins.mjs)。
+
+要点（如需手写/看懂插件）：
 - 导出 `{ name, inject: ['web'], apply(ctx, config) }`。
 - `apply` 里调用 `ctx.web.registerSearchProvider(new MiniMaxSearchProvider({apiKey, env}))`。
 - `env` 来自 `ctx.get('launchEnvironment')`；`resolveApiKey()` **每次实时**解析（config.apiKey → launchEnvironment 快照）。
@@ -135,14 +152,16 @@ chmod 600 ~/.dsh/.env
 恢复 DSH 内置 DeepSeek 搜索（或换回原状）：
 
 ```bash
-# 1) 删掉 patch 里的 minimax 相关条目（web-search-deepseek disabled、web.searchProvider、insert）
+# 1) 删掉宿主 patch 里的 minimax 相关条目
+#    （web-search-deepseek disabled、web.searchProvider、insert）
 # 2) 或直接备份还原 cordis.patch.yml
 cp ~/.dsh/profiles/web/cordis.patch.yml ~/.dsh/profiles/web/cordis.patch.yml.bak   # 改前先备份
-# 3) 如果不想留插件文件
+# 3) 想把插件文件也从宿主移除（仓库源码保留，不删）
 rm ~/.dsh/profiles/web/plugins/minimax-search.mjs
 ```
 
-> 建议：改 patch 前先备份一份 `cordis.patch.yml`。
+> 建议：改宿主 patch 前先备份一份 `cordis.patch.yml`。
+> 仓库 `plugins/minimax-search/` 是源码；宿主是安装产物。**回滚只在宿主侧操作即可，不动仓库源码。**
 
 ---
 

@@ -119,7 +119,19 @@ pm2 save && pm2 startup
 
 ---
 
-## 五、在钉钉里使用
+## 五、安装宿主插件（可选：网页搜索）
+
+桥接器之外，仓库还兼作 **DSH 插件集合**。可选安装 MiniMax 网页搜索（让 `web_search` 工具可用）：
+
+```bash
+npm run install:plugins     # 同步 plugins/ → ~/.dsh/profiles/web/plugins/
+```
+
+并按 [docs/MINIMAX-SEARCH.md](MINIMAX-SEARCH.md) 配置宿主 patch 与 `~/.dsh/.env` 的 `MINIMAX_API_KEY`。
+
+---
+
+## 六、在钉钉里使用
 
 1. 在钉钉里搜索你的机器人（或把它拉进群聊）。
 2. 单聊：直接发消息即可对话。
@@ -134,7 +146,7 @@ pm2 save && pm2 startup
 
 ---
 
-## 六、常见问题
+## 七、常见问题
 
 ### Q1: 启动时报「配置缺失」
 按上面步骤填好 `.env`，运行 `npm run check:config`。
