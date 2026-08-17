@@ -33,6 +33,9 @@ export class Bridge {
     this.pending = new Set();
     /** dshSessionId -> { conversationId, msg } 最近一次发送者，用于回复路由 */
     this.replyTargets = new Map();
+    /** 主动推送：候选（待稳定）与去抖定时器 */
+    this._activePushCandidate = null;
+    this._activePushTimer = null;
     this._onMuxEvent = (ev) => this._handleSessionEvent(ev);
     this._onDingMessage = (msg) => this._handleDingMessage(msg);
   }
@@ -49,6 +52,8 @@ export class Bridge {
   stop() {
     this.dingtalk?.off?.('message', this._onDingMessage);
     this.dsh?.off?.('session/event', this._onMuxEvent);
+    if (this._activePushTimer) { clearTimeout(this._activePushTimer); this._activePushTimer = null; }
+    this._activePushCandidate = null;
   }
 
   /** 处理一条钉钉机器人消息。 */
@@ -393,7 +398,13 @@ export class Bridge {
 
   /** 处理 events.mux 里的 session/event —— 识别 assistant 文本回复并回发钉钉。 */
   _handleSessionEvent({ sessionId, event }) {
-    if (event?.type !== 'assistant/message') return;
+    const type = event?.type;
+    // 主动推送场景的事件（assistant/message + 跟随的 tool/call/step）都收，
+    // 用于「延迟去抖 → 只推最终结果」。
+    if (this.config.bridge?.enableActivePush !== false) {
+      this._trackActivePushActivity(sessionId, event);
+    }
+    if (type !== 'assistant/message') return;
     // 原始 SessionEvent：{ type, seq, time, data:{ message:{ content:[...] } } }
     const text = assistantText(event);
     this.log(`[reply] assistant/message session=${sessionId} seq=${event?.seq} 文本长度=${text.length}`);
@@ -407,19 +418,57 @@ export class Bridge {
     if (!target) {
       // 没有「当前正在等回复」的钉钉消息 —— 这是 DSH 主动产生的消息
       // （schedule 定时提醒、Agent 主动输出、或经其他通道触发的回复）。
-      // 走「主动推送」：反查哪个钉钉会话把该 DSH 会话设为投递目标，用持久 webhook 推过去。
-      const pushed = this._tryActivePush(sessionId, text);
-      if (pushed) {
-        this.log(`[reply] 主动推送 session=${sessionId} seq=${event?.seq} 文本长度=${text.length}`);
-      } else {
-        this.log(`[reply] 无回复目标(sessionId=${sessionId})，忽略`);
-      }
+      // 走「主动推送」，但只推「最终结果」：把本条设为候选并延迟去抖，
+      // 若后续还有输出（新的 assistant/message 或 tool/call）则替换候选，
+      // 安静一段时间后才真正推送（此时即最终结果）。
+      this._setActivePushCandidate(sessionId, event.seq, text);
       return;
     }
     this._replyText(target, this._formatReply(text)).catch((err) => {
       this.log(`reply to dingtalk failed: ${err?.message || err}`);
     });
     this.log(`[reply] 已回发钉钉: ${JSON.stringify(this._formatReply(text)).slice(0, 60)}…`);
+  }
+
+  /**
+   * 主动推送的候选与去抖：
+   * - 收到 assistant/message（无 replyTarget）→ 设为候选，重置去抖定时器
+   * - 收到后续 tool/call / step/start 等 → 说明 Agent 还在继续输出，重置去抖
+   * - 去抖到期（安静窗口内无新活动）→ 推送候选（即最终结果）
+   */
+  _setActivePushCandidate(sessionId, seq, text) {
+    this.log(`[push] 候选 session=${sessionId} seq=${seq}（等待稳定后再推）`);
+    this._activePushCandidate = { sessionId, seq, text, hash: `${sessionId}:${seq}` };
+    this._resetActivePushTimer();
+  }
+
+  /** 每次主动推送相关事件到来都「续期」去抖定时器。 */
+  _trackActivePushActivity(sessionId, event) {
+    // 只对「可能继续输出的」事件续期：assistant/message、tool/*、step/*
+    const t = event?.type || '';
+    if (!/^(assistant\/message|tool\/|step\/|agent\/status)/.test(t)) return;
+    if (!this._activePushCandidate) return;
+    if (this._activePushCandidate.sessionId !== sessionId) return;
+    this._resetActivePushTimer();
+  }
+
+  _resetActivePushTimer() {
+    if (this._activePushTimer) { clearTimeout(this._activePushTimer); this._activePushTimer = null; }
+    // 静默窗口：默认 2.5s。此时长内无新输出视为「最终结果」。
+    const quiet = Number(this.config.bridge?.activePushQuietMs) || 2500;
+    this._activePushTimer = setTimeout(() => {
+      this._activePushTimer = null;
+      const cand = this._activePushCandidate;
+      this._activePushCandidate = null;
+      if (!cand) return;
+      this.log(`[push] 最终结果稳定 candidate session=${cand.sessionId} seq=${cand.seq} 文本长度=${cand.text.length}`);
+      const pushed = this._tryActivePush(cand.sessionId, cand.text);
+      if (pushed) {
+        this.log(`[push] 已主动推送 session=${cand.sessionId} seq=${cand.seq}`);
+      } else {
+        this.log(`[push] 推送失败/无目标 session=${cand.sessionId} seq=${cand.seq}`);
+      }
+    }, quiet);
   }
 
   /**

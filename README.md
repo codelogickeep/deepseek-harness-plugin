@@ -92,8 +92,10 @@ DSH 会话产生**非用户触发的消息**（官方 `dsh-schedule` 定时提�
 桥接器会把它推到将该会话设为投递目标的钉钉会话（`📨 Agent 主动消息` 前缀）。
 
 - 前提：该钉钉用户**先给机器人发过消息**（持久化其 `sessionWebhook`）。
-- 配置：`ENABLE_ACTIVE_PUSH=true`（默认开）· `ACTIVE_PUSH_PREFIX=📨 Agent 主动消息`。
-- 链路：`定时到期 → Agent 输出 → 事件流捕获 → 持久 webhook → 钉钉`。
+- **只推最终结果**：中间输出（思考/工具过程）不推，静默 `ACTIVE_PUSH_QUIET_MS`（默认 2.5s）后仅推最终结论。
+- 配置：`ENABLE_ACTIVE_PUSH=true`（默认开）· `ACTIVE_PUSH_PREFIX=📨 Agent 主动消息` · `ACTIVE_PUSH_QUIET_MS=2500`。
+- 链路：`定时到期 → Agent 输出 → 事件流捕获 → 去抖只取最终 → 持久 webhook → 钉钉`。
+- 端到端已实测：`docs/LESSONS.md`「番外：定时任务 + 主动推送」。
 
 ---
 

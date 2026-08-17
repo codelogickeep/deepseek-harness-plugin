@@ -128,6 +128,62 @@ this.client.registerCallbackListener(TOPIC_ROBOT, (msg) => this._onCallback(msg)
 
 ---
 
+## 番外：定时任务 + 钉钉主动推送（端到端实战沉淀）
+
+**目标**：DSH 定时提醒 → 到期唤醒 Agent → 回复 → 桥接器主动推到钉钉。
+
+### 链路（实测打通）
+
+```
+schedule_create(after/every) → dsh-schedule 持久化到 session event log
+→ 到期 overdue → 会话 idle 后注入 [SCHEDULE REMINDER] user 消息
+→ Agent 收到提醒并回复（assistant/message）
+→ 桥接器 events.mux 捕获 → 无 replyTarget → _tryActivePush
+→ 反查 mapping 的 active/历史会话 → 持久 sessionWebhook → POST 到钉钉
+```
+
+### 关键踩坑：主动推送反查失配
+
+**现象**：定时提醒投递到的 DSH 会话（Web 主会话 `12367081`）不是钉钉映射的
+active 目标（旧值 `64dc23b2`），桥接器 `_tryActivePush` 只匹配 active → 不匹配 → 忽略，
+钉钉收不到。
+
+**根因**：
+- 钉钉映射的 `activeSessionId` 是「钉钉投递目标」，而 Web UI 用的主会话可能不同；
+- `dsh-schedule` 的提醒投递到「创建它的会话」（即 Web 主会话），不是映射 active。
+
+**修复**（`_tryActivePush`）：
+1. **精确匹配**：`entry.activeSessionId === sessionId`；
+2. **历史兜底**：`entry.sessions` 里用过该会话（仅当唯一，避免群聊/多会话误推）；
+3. 更新映射，让 active 指向当前真实活跃会话（等价 `/use` 切换）。
+
+### 关键踩坑：会推送中间输出（不想要）
+
+**现象**：一次回复有多条 `assistant/message`（每个 step 一段：思考、工具前、工具后、最终结论），
+第一条就被推送，用户收到一堆过程碎片。
+
+**根因**：对每个无 replyTarget 的 assistant/message 立即推送。
+
+**修复**：**延迟去抖 + 只推最终结果**——收到候选后设静默窗口（`ACTIVE_PUSH_QUIET_MS`，默认 2.5s）；
+窗口内任何后续输出（assistant/message、tool/*、step/*）都会替换候选并重置定时器；
+窗口到期仍安静，则推送候选（即最终结果）。
+
+### 关键技术点
+
+- `dsh-schedule` 是**session-local**：只唤醒「原会话且存活中」的 Agent；冷会话不主动通知。
+- `after` 一次性、`every` 周期（≥5min，创建锚定对齐，错过不补）。
+- 主动推送依赖**持久 sessionWebhook**（该会话最近一次回调的 `sessionWebhook`）——用户必须先给机器人发过消息。
+- 事件类型参考：`step/start → assistant/message → [tool/call → tool/result] → step/end`，循环；
+  **最终回复 = 最后一次 step 的 assistant/message（其后无 tool/call）**。
+
+### 验证要点（实测）
+
+- `schedule_list` 状态 `scheduled → overdue`（到期未投递），会话 idle 后注入。
+- 桥接器日志 `[push] 最终结果稳定 candidate ...` → `[push] 已主动推送` = 成功。
+- `[push] ... 无持久 webhook` = 该会话还没给过回调。
+
+---
+
 ## 三、方法论沉淀
 
 ### 3.1 外部程序对接 DSH 的完整协议（可复用）

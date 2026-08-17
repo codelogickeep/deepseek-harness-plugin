@@ -117,6 +117,50 @@ pm2 start src/index.js --name dsh-dingtalk-bridge
 pm2 save && pm2 startup
 ```
 
+### macOS 开机自启（launchd，推荐）
+
+DSH 本体已用 launchd 管理（`com.deepseek.dsh`）。桥接器同样用 launchd 实现**开机自启 + 崩溃自动重启**：
+
+1. 创建 `~/Library/LaunchAgents/com.dsh.dingtalk-bridge.plist`（内容见下）。
+2. `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.dsh.dingtalk-bridge.plist`
+3. 验证：`launchctl list | grep dingtalk` 显示服务；日志在 `~/.dsh/bridge.stdout.log`。
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dsh.dingtalk-bridge</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/zhengyd/.nvm/versions/node/v24.12.0/bin/node</string>
+        <string>/Users/zhengyd/OpenProject/deepseek-harness-plugin/src/index.js</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/zhengyd/OpenProject/deepseek-harness-plugin</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key><string>/Users/zhengyd</string>
+        <key>PATH</key>
+        <string>/Users/zhengyd/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>StandardOutPath</key><string>/Users/zhengyd/.dsh/bridge.stdout.log</string>
+    <key>StandardErrorPath</key><string>/Users/zhengyd/.dsh/bridge.stderr.log</string>
+</dict>
+</plist>
+```
+
+> 说明：`config.js` 会自动从 `WorkingDirectory/.env` 读取钉钉凭证，无需在 plist 里重复放密钥。
+> `KeepAlive=true` 让进程崩溃后自动重启；`ThrottleInterval=10` 防止快速崩溃风暴。
+
 ---
 
 ## 五、安装宿主插件（可选：网页搜索）

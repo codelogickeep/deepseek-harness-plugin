@@ -168,11 +168,15 @@ test('群聊 @ 过滤逻辑', () => {
   assert.equal(bridge._extractText({ msgtype: 'text', text: { content: '@我的机器人 你好' } }), '你好');
 });
 
-test('主动推送：DSH 无回复目标的 assistant 消息 → 钉钉（持久 webhook）', () => {
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('主动推送：DSH 无回复目标的 assistant 消息 → 钉钉（持久 webhook）', async () => {
   const ding = new MockDingTalk();
   const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-'));
   const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
-  const bridge = new Bridge({ dingtalk: ding, mapper, config: mkConfig(), log: () => {} });
+  const cfg = mkConfig();
+  cfg.bridge.activePushQuietMs = 50; // 测试用短静默窗
+  const bridge = new Bridge({ dingtalk: ding, mapper, config: cfg, log: () => {} });
   bridge._sentSeq = new Set(); // 独立去重集合，避免跨测试干扰
 
   // 1. 先有钉钉会话（持久 webhook + active 投递目标为该 DSH 会话）
@@ -192,7 +196,8 @@ test('主动推送：DSH 无回复目标的 assistant 消息 → 钉钉（持久
   };
   bridge._handleSessionEvent(ev);
 
-  // 3. 验证通过持久 webhook 推送到了钉钉
+  // 3. 等待去抖窗结束（静默后推送最终结果）
+  await wait(120);
   assert.ok(mapper.getWebhook(convId) === webhookVal, 'webhook 应已持久化');
   const hit = ding.replies.find((r) => r.conversationId === convId);
   assert.ok(hit, '应主动推送到钉钉');
@@ -203,7 +208,7 @@ test('主动推送：DSH 无回复目标的 assistant 消息 → 钉钉（持久
   rmSync(tmpdirName, { recursive: true, force: true });
 });
 
-test('主动推送：enableActivePush=false 时跳过', () => {
+test('主动推送：enableActivePush=false 时跳过', async () => {
   const ding = new MockDingTalk();
   const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-off-'));
   const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
@@ -222,17 +227,20 @@ test('主动推送：enableActivePush=false 时跳过', () => {
   };
   bridge._handleSessionEvent(ev);
 
+  await wait(150);
   const hit = ding.replies.find((r) => r.conversationId === convId);
   assert.ok(!hit, '禁用后不应推送');
   bridge.stop();
   rmSync(tmpdirName, { recursive: true, force: true });
 });
 
-test('主动推送：历史使用过该会话（非 active）也兜底推送', () => {
+test('主动推送：历史使用过该会话（非 active）也兜底推送', async () => {
   const ding = new MockDingTalk();
   const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-hist-'));
   const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
-  const bridge = new Bridge({ dingtalk: ding, mapper, config: mkConfig(), log: () => {} });
+  const cfg = mkConfig();
+  cfg.bridge.activePushQuietMs = 50;
+  const bridge = new Bridge({ dingtalk: ding, mapper, config: cfg, log: () => {} });
   bridge._sentSeq = new Set();
 
   const convId = `cid-pushhist-${Date.now()}`;
@@ -250,9 +258,47 @@ test('主动推送：历史使用过该会话（非 active）也兜底推送', (
   };
   bridge._handleSessionEvent(ev);
 
+  await wait(120);
   const hit = ding.replies.find((r) => r.conversationId === convId);
   assert.ok(hit, '历史使用过的会话也应兜底推送');
   assert.ok(hit.text.includes('历史会话的主动消息'), `内容应匹配；实际: ${JSON.stringify(hit)}`);
+  bridge.stop();
+  rmSync(tmpdirName, { recursive: true, force: true });
+});
+
+test('主动推送：只推最终结果（中间输出不推）', async () => {
+  const ding = new MockDingTalk();
+  const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-final-'));
+  const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
+  const cfg = mkConfig();
+  cfg.bridge.activePushQuietMs = 60;
+  const bridge = new Bridge({ dingtalk: ding, mapper, config: cfg, log: () => {} });
+  bridge._sentSeq = new Set();
+
+  const convId = `cid-pushfinal-${Date.now()}`;
+  mapper.setWebhook(convId, `http://fake/${convId}`);
+  mapper.setActive(convId, 'session-final');
+
+  // 模拟一轮：中间输出(assistant/message) → tool/call → tool/result → 最终输出(assistant/message)
+  bridge._handleSessionEvent({
+    sessionId: 'session-final',
+    event: { type: 'assistant/message', seq: 99010, data: { message: { content: [{ type: 'text', text: '第一步：我想想' }] } } },
+  });
+  bridge._handleSessionEvent({ sessionId: 'session-final', event: { type: 'tool/call', seq: 99011, data: {} } });
+  bridge._handleSessionEvent({ sessionId: 'session-final', event: { type: 'tool/result', seq: 99012, data: {} } });
+  bridge._handleSessionEvent({ sessionId: 'session-final', event: { type: 'step/end', seq: 99013 } });
+  bridge._handleSessionEvent({
+    sessionId: 'session-final',
+    event: { type: 'assistant/message', seq: 99014, data: { message: { content: [{ type: 'text', text: '最终结果：完成了' }] } } },
+  });
+
+  // 等足够久（覆盖中间 4 个事件间隔 + 静默窗）
+  await wait(250);
+
+  const hits = ding.replies.filter((r) => r.conversationId === convId);
+  assert.equal(hits.length, 1, `应只推送 1 条最终结果；实际 ${hits.length} 条: ${JSON.stringify(hits)}`);
+  assert.ok(hits[0].text.includes('最终结果'), `应推送最终结果；实际: ${JSON.stringify(hits[0])}`);
+  assert.ok(!hits[0].text.includes('第一步'), '不应推送中间输出');
   bridge.stop();
   rmSync(tmpdirName, { recursive: true, force: true });
 });

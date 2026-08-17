@@ -92,6 +92,8 @@ export function getConfig() {
       enableActivePush: pick('ENABLE_ACTIVE_PUSH', 'bridge.enableActivePush', 'true') !== 'false',
       /** 主动推送消息的醒目前缀 */
       activePushPrefix: pick('ACTIVE_PUSH_PREFIX', 'bridge.activePushPrefix', '📨 Agent 主动消息'),
+      /** 主动推送「只推最终结果」的静默窗口（ms）：窗口内无新输出即视为最终结果 */
+      activePushQuietMs: pick('ACTIVE_PUSH_QUIET_MS', 'bridge.activePushQuietMs', '2500'),
     },
     log: {
       level: pick('LOG_LEVEL', 'log.level', 'info'),
