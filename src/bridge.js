@@ -36,6 +36,8 @@ export class Bridge {
     /** 主动推送：候选（待稳定）与去抖定时器 */
     this._activePushCandidate = null;
     this._activePushTimer = null;
+    /** 处于「定时提醒回复窗口」的 sessionId 集合（只推这些会话的主动回复） */
+    this._scheduleReminderSessions = new Set();
     this._onMuxEvent = (ev) => this._handleSessionEvent(ev);
     this._onDingMessage = (msg) => this._handleDingMessage(msg);
   }
@@ -54,6 +56,7 @@ export class Bridge {
     this.dsh?.off?.('session/event', this._onMuxEvent);
     if (this._activePushTimer) { clearTimeout(this._activePushTimer); this._activePushTimer = null; }
     this._activePushCandidate = null;
+    this._scheduleReminderSessions.clear();
   }
 
   /** 处理一条钉钉机器人消息。 */
@@ -399,6 +402,18 @@ export class Bridge {
   /** 处理 events.mux 里的 session/event —— 识别 assistant 文本回复并回发钉钉。 */
   _handleSessionEvent({ sessionId, event }) {
     const type = event?.type;
+    // 主动推送场景：只在「schedule 定时提醒触发的回复」时推送。
+    // 判定：user/message 且文本含 [SCHEDULE REMINDER]（或 source.plugin === 'schedule'）
+    // → 开启该会话的「提醒回复窗口」。
+    if (type === 'user/message') {
+      const userText = this._userText(event);
+      const isSchedule = userText.includes('[SCHEDULE REMINDER]') ||
+        event?.data?.source?.plugin === 'schedule' || event?.data?.source?.kind === 'schedule';
+      if (isSchedule) {
+        this._scheduleReminderSessions.add(sessionId);
+        this.log(`[push] session=${sessionId} 检测到定时提醒注入(source.plugin=${event?.data?.source?.plugin})，开启提醒回复窗口`);
+      }
+    }
     // 主动推送场景的事件（assistant/message + 跟随的 tool/call/step）都收，
     // 用于「延迟去抖 → 只推最终结果」。
     if (this.config.bridge?.enableActivePush !== false) {
@@ -431,12 +446,30 @@ export class Bridge {
   }
 
   /**
-   * 主动推送的候选与去抖：
-   * - 收到 assistant/message（无 replyTarget）→ 设为候选，重置去抖定时器
-   * - 收到后续 tool/call / step/start 等 → 说明 Agent 还在继续输出，重置去抖
-   * - 去抖到期（安静窗口内无新活动）→ 推送候选（即最终结果）
+   * 提取 user/message 事件的文本。
+   * 注意：user/message 的结构是 data.content（ContentBlock[]），
+   * 与 assistant 的 data.message.content 不同，不能用 assistantText。
+   */
+  _userText(event) {
+    const content = event?.data?.content;
+    if (!Array.isArray(content)) return '';
+    return content
+      .filter((c) => c?.type === 'text' && typeof c.text === 'string')
+      .map((c) => c.text)
+      .join('');
+  }
+
+  /**
+   * 主动推送的候选与去抖：仅对「定时提醒触发的回复」启用。
+   * - 只有 sessionId 处于提醒回复窗口（收到过 [SCHEDULE REMINDER]）时才设候选
+   * - 收到 assistant/message → 设为候选；后续 tool/call 等续期去抖
+   * - 去抖到期 → 推送最终结果，并关闭该会话的提醒窗口（一个提醒只推一条）
    */
   _setActivePushCandidate(sessionId, seq, text) {
+    if (!this._scheduleReminderSessions.has(sessionId)) {
+      this.log(`[push] session=${sessionId} 不在提醒窗口内，跳过主动推送（只推定时提醒触发）`);
+      return;
+    }
     this.log(`[push] 候选 session=${sessionId} seq=${seq}（等待稳定后再推）`);
     this._activePushCandidate = { sessionId, seq, text, hash: `${sessionId}:${seq}` };
     this._resetActivePushTimer();
@@ -465,6 +498,8 @@ export class Bridge {
       const pushed = this._tryActivePush(cand.sessionId, cand.text);
       if (pushed) {
         this.log(`[push] 已主动推送 session=${cand.sessionId} seq=${cand.seq}`);
+        // 一个提醒只推一条：推送后关闭该会话的提醒窗口
+        this._scheduleReminderSessions.delete(cand.sessionId);
       } else {
         this.log(`[push] 推送失败/无目标 session=${cand.sessionId} seq=${cand.seq}`);
       }

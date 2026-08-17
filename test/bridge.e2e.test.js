@@ -185,7 +185,21 @@ test('主动推送：DSH 无回复目标的 assistant 消息 → 钉钉（持久
   mapper.setWebhook(convId, webhookVal);
   mapper.setActive(convId, 'session-push-target');
 
-  // 2. 来自 DSH 的 assistant/message（无 replyTarget —— 模拟定时/主动推送）
+  // 2. 模拟定时提醒注入（user/message：data.content + source.plugin=schedule → 打开提醒窗口）
+  bridge._handleSessionEvent({
+    sessionId: 'session-push-target',
+    event: {
+      type: 'user/message',
+      seq: 99000,
+      data: {
+        content: [{ type: 'text', text: '[SCHEDULE REMINDER]\n提醒内容' }],
+        source: { kind: 'plugin', plugin: 'schedule' },
+        role: 'user',
+      },
+    },
+  });
+
+  // 3. 来自 DSH 的 assistant/message（无 replyTarget —— 提醒触发后的回复）
   const ev = {
     sessionId: 'session-push-target',
     event: {
@@ -196,7 +210,7 @@ test('主动推送：DSH 无回复目标的 assistant 消息 → 钉钉（持久
   };
   bridge._handleSessionEvent(ev);
 
-  // 3. 等待去抖窗结束（静默后推送最终结果）
+  // 4. 等待去抖窗结束（静默后推送最终结果）
   await wait(120);
   assert.ok(mapper.getWebhook(convId) === webhookVal, 'webhook 应已持久化');
   const hit = ding.replies.find((r) => r.conversationId === convId);
@@ -204,6 +218,32 @@ test('主动推送：DSH 无回复目标的 assistant 消息 → 钉钉（持久
   assert.ok(hit.text.includes('定时提醒内容'), `内容应含提醒文本；实际: ${JSON.stringify(hit)}`);
   assert.ok(hit.text.includes('Agent 主动消息') || hit.text.includes('来自 Agent'), `应有主动推送前缀；实际: ${JSON.stringify(hit)}`);
 
+  bridge.stop();
+  rmSync(tmpdirName, { recursive: true, force: true });
+});
+
+test('主动推送：非定时提醒的 agent 自发言不推', async () => {
+  const ding = new MockDingTalk();
+  const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-non-'));
+  const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
+  const cfg = mkConfig();
+  cfg.bridge.activePushQuietMs = 50;
+  const bridge = new Bridge({ dingtalk: ding, mapper, config: cfg, log: () => {} });
+  bridge._sentSeq = new Set();
+
+  const convId = `cid-pushnon-${Date.now()}`;
+  mapper.setWebhook(convId, `http://fake/${convId}`);
+  mapper.setActive(convId, 'session-normal');
+
+  // 无 [SCHEDULE REMINDER] 注入，普通 agent 自发言（assistant/message）
+  bridge._handleSessionEvent({
+    sessionId: 'session-normal',
+    event: { type: 'assistant/message', seq: 99020, data: { message: { content: [{ type: 'text', text: '我自言自语的一句话' }] } } },
+  });
+
+  await wait(150);
+  const hit = ding.replies.find((r) => r.conversationId === convId);
+  assert.ok(!hit, '非定时提醒的 agent 自发言不应推送');
   bridge.stop();
   rmSync(tmpdirName, { recursive: true, force: true });
 });
@@ -251,6 +291,11 @@ test('主动推送：历史使用过该会话（非 active）也兜底推送', a
   ctx.sessions['session-historical-b'] = { lastUsedAt: Date.now() };
   mapper.setActive(convId, 'session-active-a'); // 重写（保持 sessions 含 B）
 
+  // 定时提醒注入（开窗；这里无 [SCHEDULE REMINDER] 文本，仅靠 source.plugin=schedule 识别）
+  bridge._handleSessionEvent({
+    sessionId: 'session-historical-b',
+    event: { type: 'user/message', seq: 99002, data: { content: [{ type: 'text', text: '新格式提醒' }], source: { kind: 'plugin', plugin: 'schedule' }, role: 'user' } },
+  });
   // B 会话产生主动消息（非 active，但历史匹配）
   const ev = {
     sessionId: 'session-historical-b',
@@ -278,6 +323,12 @@ test('主动推送：只推最终结果（中间输出不推）', async () => {
   const convId = `cid-pushfinal-${Date.now()}`;
   mapper.setWebhook(convId, `http://fake/${convId}`);
   mapper.setActive(convId, 'session-final');
+
+  // 定时提醒注入（开窗）
+  bridge._handleSessionEvent({
+    sessionId: 'session-final',
+    event: { type: 'user/message', seq: 99009, data: { content: [{ type: 'text', text: '[SCHEDULE REMINDER]\nreminder' }], source: { plugin: 'schedule' } } },
+  });
 
   // 模拟一轮：中间输出(assistant/message) → tool/call → tool/result → 最终输出(assistant/message)
   bridge._handleSessionEvent({
