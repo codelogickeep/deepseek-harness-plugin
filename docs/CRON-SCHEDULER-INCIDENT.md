@@ -182,10 +182,10 @@ this._info(`已触发任务 ${task.id} @ ${at.toISOString()} -> agent ${agent.id
 
 ## 六、相关文件
 
-- 插件：`src/cron-scheduler.mjs`（修复后）
+- 插件：`plugins/cron-scheduler/cron-scheduler.mjs`（修复后）
 - 测试：`test/cron-scheduler.integration.test.js`（含「lastFired 状态文件兜底」用例）
-- 调度核心：`src/scheduler.js`、`src/cron.js`
-- 部署：`~/.dsh/profiles/web/plugins/cron-scheduler.mjs`
+- 调度核心：`plugins/cron-scheduler/scheduler.js`、`plugins/cron-scheduler/cron.js`
+- 部署：`~/.dsh/profiles/web/plugins/cron-scheduler/`（`npm run install:plugins` 整目录同步，patch 引用 `./plugins/cron-scheduler/cron-scheduler.mjs`）
 - 相关阅读：
   - [LESSONS.md](./LESSONS.md)（桥接器搭建复盘）
   - [PLUGIN-ECOSYSTEM.md](./PLUGIN-ECOSYSTEM.md)（插件生态）

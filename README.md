@@ -154,8 +154,8 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 
 ### 设计要点（可维护性优先）
 
-- **核心算法单一事实源**：cron 解析/调度逻辑在项目 `src/cron.js` + `src/scheduler.js`，
-  插件经 `config.coreDir` 动态 import，部署与测试同源（避免两处漂移）。
+- **核心算法单一事实源**：cron 解析/调度逻辑与插件入口同目录（`cron.js` + `scheduler.js`），
+  整目录自包含，部署与测试同源（避免两处漂移）。
 - **跨重启防重复**：触发后 `lastFiredAt` 回写；主配置若在 DSH 沙箱外不可写时，
   自动落到 workspace 内 `config/cron-scheduler-state.json`（根治重复触发死循环）。
 - **不再写自定义 session 事件**：审计走 logger，绝不 `session.append` 自定义类型
@@ -164,21 +164,32 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 
 ### 安装与源码
 
-- **源码**：`src/cron-scheduler.mjs`（项目唯一真相源；核心算法依赖 `src/cron.js` + `src/scheduler.js`）
-- **部署**：复制到 DSH 宿主插件目录 `~/.dsh/profiles/web/plugins/cron-scheduler.mjs`（
-  现有部署即手动 COPY，非 `install:plugins` 管理；改源码后需同步并重启 DSH）
-- **宿主机制**：`cordis.patch.yml` 插入 `cron-scheduler` 行（已启用）
+- **源码**：`plugins/cron-scheduler/`（自包含目录：`cron-scheduler.mjs` 入口 + `cron.js`/`scheduler.js` 核心）
+- **部署**：`npm run install:plugins` 整目录同步到宿主 `~/.dsh/profiles/web/plugins/cron-scheduler/`
+- **宿主机制**：`cordis.patch.yml` 插入 `cron-scheduler` 行，引用 `./plugins/cron-scheduler/cron-scheduler.mjs`（已启用）
+- **核心自定位**：入口用 `import.meta.url` 定位同目录核心模块，部署与测试同源、无仓库绝对路径耦合
 
 ---
 
 ## 脚手架：如何往这个项目里加新插件
 
-1. **独立进程类**（如钉钉桥接器）→ 放 `src/`，共享 `/api` 协议。
-2. **DSH 宿主插件**（如 MiniMax 搜索）→ 放 `plugins/<name>/` 子目录，源码唯一真相；
-   用 `npm run install:plugins` 同步到 DSH 宿主（见 [scripts/install-plugins.mjs](scripts/install-plugins.mjs)）。
-   > 例外：自研 cron-scheduler 的源码放在 `src/`（它复用 repo 内 `cron.js`/`scheduler.js` 核心算法，
-   > 部署靠手动 COPY 到宿主 plugins/）。
-3. 新插件务必写**文档**（带 frontmatter）+ **测试** + 更新 README 插件目录。
+**目录规矩（重要，新插件必须遵守）**：
+
+| 插件类别 | 放哪 | 部署 |
+| --- | --- | --- |
+| DSH 宿主插件 | `plugins/<name>/`（自包含子目录：入口 + 核心 + 依赖） | `npm run install:plugins` 整目录同步 |
+| 独立进程插件 | `src/`（桥接器等，通过 `/api` 协议通信） | 独立 launchd 服务 |
+
+1. **DSH 宿主插件**（如 MiniMax 搜索、cron-scheduler）→ 一律放 `plugins/<name>/` 子目录，
+   一个插件一个目录（入口文件 + 核心代码同目录，自包含）；
+   用 `npm run install:plugins` 整目录同步到宿主 `plugins/<name>/`，patch 引用
+   `./plugins/<name>/<入口文件>`（见 [scripts/install-plugins.mjs](scripts/install-plugins.mjs)）。
+2. **独立进程类**（如钉钉桥接器）→ 放 `src/`，共享 `/api` 协议，与宿主插件无依赖。
+3. 新插件务必写**文档**（带 frontmatter）+ **测试**（放 `test/`）+ 更新 README 插件目录。
+
+> 规矩的本质：`plugins/` 只装 DSH 宿主插件（被 `cordis.patch.yml` 加载），`src/` 只装独立进程
+> （被 launchd/npm start 拉起），两者绝不混放。cron-scheduler 已从 `src/` 迁到
+> `plugins/cron-scheduler/` 作为规范示例。
 
 机制与目录规划详见 [docs/PLUGIN-ECOSYSTEM.md](docs/PLUGIN-ECOSYSTEM.md)。
 
@@ -187,23 +198,24 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 ## 项目结构
 
 ```
-├── src/                     # ① 独立进程类插件（钉钉桥接器等）
+├── src/                     # 独立进程类插件（仅钉钉桥接器）
 │   ├── index.js             # 入口/装配/优雅关闭
 │   ├── config.js            # 配置加载（env/.env/config.json + 校验）
 │   ├── dsh-client.js        # DSH 外部客户端（RPC + WS 事件流 + 自动重连）
 │   ├── dingtalk-client.js   # 钉钉 Stream 客户端（含连接守护）
 │   ├── sessions.js          # 会话映射持久化
-│   ├── bridge.js            # 双向转发核心
-│   ├── cron-scheduler.mjs   # ② DSH 宿主插件：自研 cron 定时调度（源码在此，手动 COPY 部署）
-│   ├── cron.js              #   cron 解析/下一命中（核心算法）
-│   └── scheduler.js         #   调度状态机/防重复（核心算法）
-├── plugins/                 # ② DSH 宿主插件（每个插件一个子目录，源码唯一真相源）
-│   └── minimax-search/
-│       └── minimax-search.mjs
+│   └── bridge.js            # 双向转发核心
+├── plugins/                 # DSH 宿主插件（每个插件一个自包含子目录）
+│   ├── minimax-search/
+│   │   └── minimax-search.mjs
+│   └── cron-scheduler/
+│       ├── cron-scheduler.mjs   # 自研 cron 定时调度入口
+│       ├── cron.js              #   cron 解析/下一命中（核心算法）
+│       └── scheduler.js         #   调度状态机/防重复（核心算法）
 ├── tools/
 │   └── restart-dsh-and-verify.mjs # launchd 重启 DSH 并自动验证
 ├── scripts/
-│   └── install-plugins.mjs  # 脚手架：同步 plugins/ → ~/.dsh/profiles/<profile>/plugins/
+│   └── install-plugins.mjs  # 脚手架：整目录同步 plugins/<name>/ → 宿主 plugins/<name>/
 ├── test/                    # 集成测试（需要 DSH 在线）
 ├── config/config.example.json
 ├── docs/

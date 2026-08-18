@@ -20,16 +20,18 @@
  *   ]
  * }
  *
- * 触发语义（复用 src/scheduler.js）：
+ * 触发语义（复用同目录 scheduler.js）：
  *  每 30s tick 检测「自上次触发以来有 cron 命中」的任务；多个命中点合并成一次
  *  触发；触发后把 lastFiredAt 回写配置（跨重启不重复触发）。
  *
  * 依赖：ctx.fs(读配置)、ctx.agents(投递)、
  *      创建 user message 用 @deepseek-ai/dsh-llm 的 createUserMessage（官方推荐）。
  *
- * 核心算法单一事实源：项目 `src/`（cron.js / scheduler.js）；
- *  经 config.coreDir（默认 DEFAULT_CORE_DIR）动态 import，保持部署与测试同源。
+ * 核心算法单一事实源：与本入口同目录的 cron.js / scheduler.js（整目录自包含搬迁/部署）；
+ *  loadCore 默认用 NEW URL('.', import.meta.url) 定位，可用 config.coreDir 覆盖。
  */
+
+import { resolve } from 'node:path'
 
 // createUserMessage 仅在 DSH 宿主环境（node_modules 含 @deepseek-ai/dsh-llm）可用；
 // 测试环境解析不到时走自构造 fallback（作用等价：生成带 role/source 的 user 消息与 id）。
@@ -56,17 +58,22 @@ const LOOKBACK_MS = 120_000
 /** 告警节流窗口：60s */
 const WARN_COOLDOWN_MS = 60_000
 
-/** 核心模块默认目录（项目 src）；部署时若项目路径变化，用 config.coreDir 覆盖 */
-const DEFAULT_CORE_DIR = '/Users/zhengyd/OpenProject/deepseek-harness-plugin/src'
+/**
+ * 核心模块目录：
+ *  - 默认 = 插件自身所在目录（cron.js/scheduler.js 与入口同目录，整目录搬迁/部署）
+ *  - 可用 config.coreDir 覆盖（测试或宿主部署时指向其他位置）
+ */
+const DEFAULT_CORE_DIR = new URL('.', import.meta.url).pathname
 
-/** lastFiredAt 状态回退文件（相对 coreDir 的 ../../config/）：
+/** lastFiredAt 状态回退文件（相对 coreDir 的两级上级的 config/）：
  *  主配置 `~/.dsh/cron-schedules.json` 常在 DSH 沙箱 workspace 之外，
  *  workspace-write 模式下写不进（FS_SANDBOX_DENIED），导致 lastFired 无法回写、
  *  每次 tick 都把同一命中点重复触发（死循环）。
- *  此状态文件落在 workspace 内（可写），作为 lastFired 的持久化兜底。 */
+ *  此状态文件落在 workspace 内（可写），作为 lastFired 的持久化兜底。
+ *  插件在 `<repo>/plugins/cron-scheduler/` 时 → `<repo>/config/cron-scheduler-state.json` */
 export function stateFilePathOf(config) {
   const dir = coreDirOf(config)
-  return `${dir.replace(/\/src\/?$/, '')}/config/cron-scheduler-state.json`
+  return `${resolve(dir, '..', '..', 'config')}/cron-scheduler-state.json`
 }
 
 function coreDirOf(config) {

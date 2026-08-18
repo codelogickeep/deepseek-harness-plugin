@@ -8,8 +8,8 @@ import {
   normalizeTask,
   TriggerState,
   findHitInWindow,
-} from '../src/scheduler.js'
-import { parseCron } from '../src/cron.js'
+} from '../plugins/cron-scheduler/scheduler.js'
+import { parseCron } from '../plugins/cron-scheduler/cron.js'
 
 test('normalizeConfig: 合法配置', () => {
   const cfg = normalizeConfig(JSON.stringify({

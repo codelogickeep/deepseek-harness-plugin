@@ -17,7 +17,7 @@ status: active
 | | **A. 外部集成插件**（本仓库的钉钉桥接器） | **B. DSH 本体插件**（Cordis 插件） |
 | --- | --- | --- |
 | 是什么 | 独立运行的 Node 进程，通过 DSH 的 `/api` 通道交互 | 注册到 DSH 配置树（host composition / agent preset）的扩展（工具/服务/事件/界面） |
-| 代码放哪 | **本仓库** `src/`（有实体文件） | **有实体模块文件**（如 `minimax-search.mjs`），经 `cordis.patch.yml` 挂进配置树，或放进 preset |
+| 代码放哪 | **本仓库** `src/`（有实体文件） | **本仓库** `plugins/<name>/`（自包含子目录，如 `minimax-search/`、`cron-scheduler/`），经 `cordis.patch.yml` 挂进配置树 |
 | 怎么运行 | `npm start`（独立 daemon） | 定义插件行（`- id: xxx`），由 DSH **启动时加载**；patch 变更经 HMR 生效 |
 | 生命周期 | 独立于 DSH；**机器关了就停**，需手动/自启拉起 | 跟随 DSH 进程；DSH 重启后**配置树里的仍会加载**（动态 `cordis_define` 才是临时） |
 | 给谁用 | 钉钉用户 ↔ DSH（外部世界进来的入口） | 给 DSH Agent 本身加能力（模型步骤里能调的工具等） |
@@ -123,7 +123,7 @@ async _handleWeather(msg, text) {
 
 ```
 ~/.dsh/profiles/web/cordis.patch.yml   ← 用户层 patch（覆盖/insert 插件行）
-~/.dsh/profiles/web/plugins/xxx.mjs    ← 插件实体模块（本仓库 plugins/ 同步过来）
+~/.dsh/profiles/web/plugins/<name>/    ← 插件实体模块整目录（本仓库 plugins/<name>/ 同步过来）
 ```
 
 示例（本仓库已验证）：
@@ -134,7 +134,7 @@ async _handleWeather(msg, text) {
   config: { searchProvider: minimax }
 - insert:
     - id: minimax-search
-      name: ./plugins/minimax-search.mjs
+      name: ./plugins/minimax-search/minimax-search.mjs
 ```
 
 > ⚠️ **旧版本文档说「B 类无实体文件 / 运行时动态 definition」是错的**：
@@ -202,11 +202,15 @@ deepseek-harness-plugin/            ← 你的「DSH 插件集合 + 脚手架」
 │   ├── dingtalk-client.js          钉钉 Stream 客户端
 │   ├── dsh-client.js               DSH 客户端
 │   └── sessions.js                 会话映射
-├── plugins/                        ★ ② DSH 宿主插件（每个插件一个子目录）
-│   └── minimax-search/
-│       └── minimax-search.mjs      例：MiniMax 网页搜索 provider
+├── plugins/                        ★ ② DSH 宿主插件（每个插件一个自包含子目录）
+│   ├── minimax-search/
+│   │   └── minimax-search.mjs      例：MiniMax 网页搜索 provider
+│   └── cron-scheduler/
+│       ├── cron-scheduler.mjs      例：自研 cron 定时调度（入口 + 核心同目录）
+│       ├── cron.js                  cron 解析/下一命中
+│       └── scheduler.js             调度状态机/防重复
 ├── scripts/
-│   └── install-plugins.mjs         ★ 脚手架：同步 plugins/ → DSH 宿主
+│   └── install-plugins.mjs         ★ 脚手架：整目录同步 plugins/<name>/ → DSH 宿主
 ├── config/                         配置模板
 ├── docs/                           文档（带 frontmatter）
 ├── test/

@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseCron, parseField, nextOccurrence, nextOccurrences } from '../src/cron.js'
+import { parseCron, parseField, nextOccurrence, nextOccurrences } from '../plugins/cron-scheduler/cron.js'
 
 function utc(date) {
   return date.toISOString()

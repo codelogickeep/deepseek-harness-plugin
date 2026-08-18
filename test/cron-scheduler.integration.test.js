@@ -5,7 +5,7 @@
 import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 
-const plugin = await import(new URL('../src/cron-scheduler.mjs', import.meta.url).href)
+const plugin = await import(new URL('../plugins/cron-scheduler/cron-scheduler.mjs', import.meta.url).href)
 
 /** 内存 fs mock（resolve/readText/writeText） */
 function makeMemoryFs(initialFiles = {}) {
@@ -174,7 +174,7 @@ test('resolveSchedulesPath: config 优先', () => {
 
 test('lastFired 状态文件兜底：主配置沙箱外不可写时仍跨 tick/跨重启防重复触发（死循环根除）', async () => {
   const schedulesPath = '/tmp/cron-sandbox-outer.json' // 模拟 ~/.dsh 主配置
-  const config = { coreDir: '/Users/zhengyd/OpenProject/deepseek-harness-plugin/src' }
+  const config = { coreDir: new URL('../plugins/cron-scheduler', import.meta.url).pathname }
   const statePath = plugin.stateFilePathOf(config) // config/cron-scheduler-state.json
 
   // 1) 第一实例：主配置 writeText 抛 FS_SANDBOX_DENIED（模拟沙箱外），状态文件正常写入
