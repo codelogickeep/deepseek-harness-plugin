@@ -56,6 +56,8 @@ export class Bridge {
     this.dingtalk.on('message', this._onDingMessage);
     // DSH 回复出
     this.dsh.on('session/event', this._onMuxEvent);
+    // 重启后从持久化映射恢复回复路由，避免内存 replyTargets 丢失导致回复无法回发
+    this._restoreReplyTargets();
     // 事件流上线后，检查是否有未完成的 prompt（幂等重试场景可扩展）
     this.log('bridge started');
   }
@@ -67,6 +69,25 @@ export class Bridge {
     this._replyTimeouts.clear();
     this._replyCandidates.clear();
     this._scheduleReminderSessions.clear();
+  }
+
+  /**
+   * 从持久化映射恢复回复路由。
+   * replyTargets 是内存态：桥接重启后丢失。而用户消息触发的 turn 可能跨重启完成，
+   * 若此时 target 丢失，最终回复会被当作「主动推送」跳过，导致用户收不到消息。
+   * 这里用 mapper 里持久化的 activeSessionId + webhook 重建最小 target（回发只需这两项）。
+   */
+  _restoreReplyTargets() {
+    let n = 0;
+    for (const [convId, entry] of this.mapper.entries()) {
+      const sid = entry?.activeSessionId;
+      const webhook = this.mapper.getWebhook(convId);
+      if (sid && webhook) {
+        this.replyTargets.set(sid, { conversationId: convId, sessionWebhook: webhook });
+        n++;
+      }
+    }
+    if (n) this.log(`restored ${n} reply target(s) from mapping`);
   }
 
   /** 处理一条钉钉机器人消息。 */
