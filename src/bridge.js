@@ -174,10 +174,12 @@ export class Bridge {
   }
 
   async _handleNewCommand(msg, text) {
-    // /new [路径]: 为当前钉钉会话新建 DSH 会话并设为投递目标
+    // /new [绝对路径]：新建 DSH 会话并设为投递目标；/new <普通文本>：新建会话后把文本作为首条消息提交。
     const convId = msg.conversationId;
     const arg = text.replace(/^\/(new|reset|clear)\b/, '').trim();
-    const cwd = arg || this.config.mapping.sessionCwd;
+    // 仅当参数是绝对路径时才作为 cwd；否则按普通文本处理，避免聊天内容被误当路径导致创建失败
+    const argIsPath = /^(?:\/|[A-Za-z]:[\\/])/.test(arg);
+    const cwd = argIsPath ? arg : this.config.mapping.sessionCwd;
     const result = await this.dsh.createSession({
       cwd,
       agentPreset: this.config.mapping.agentPreset,
@@ -189,8 +191,12 @@ export class Bridge {
       const base = cwd.split(/[\\/]/).filter(Boolean).pop() || cwd;
       const title = `[${base}]`;
       this.dsh.renameSession(result.sessionId, title).catch(() => {});
-      const label = arg ? `（路径：${cwd}）` : '';
+      const label = argIsPath ? `（路径：${cwd}）` : '';
       await this._replyText(msg, `✅ 已新建 DSH 会话并切换为当前目标。\n会话：${result.sessionId}\n${cwd}${label}\n提示：之前的会话仍保留，可用 /list 和 /use 切回续聊。`);
+      // 普通文本参数视为新会话的首条消息（会注入桥接提示，直接回答）
+      if (arg && !argIsPath) {
+        await this._prompt(msg, result.sessionId, arg);
+      }
     } else {
       await this._replyText(msg, `⚠️ 无法创建新会话：${result.error?.message || '未知错误'}`);
     }
