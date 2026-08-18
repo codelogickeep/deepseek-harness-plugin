@@ -32,6 +32,7 @@ status: active
 | 能力 seam 与端口 | `capability-seams.md`、`graph-atlas.md`、`module-graph.md`、`subsystems/llm-streaming.md`、`shell.md`、`terminal.md`、`subprocess.md`、`filesystem.md`、`web.md` | seam 三角色、各端口 |
 | 安全 | `subsystems/approval.md`、`sandbox.md`、`permission-presets.md`、`credentials.md`、`settings.md` | 审批、沙箱、权限、凭据 |
 | 插件开发实战 | `cookbook/*.md`（7 篇）、`subsystems/extensions.md`、`code-runtime.md`、`typert.md`、`defensive-patterns.md` | 加工具/LLM/包/节点、Code Mode、防御 |
+| 定时任务事故复盘 | `CRON-SCHEDULER-INCIDENT.md` | 会话日志白名单 + fs 沙箱可写根 → 「历史加载失败 + 死循环」一条根因链（含 5 条插件实战法则） |
 | UI/事件图 | `subsystems/web-server.md`、`client-modules.md`、`web-styling.md`、`attachment.md`、`event-producer-consumer.md`、`feedback.md`、`user-questions.md`、`spill.md` | Web 服务器、客户端模块、事件产销图 |
 | 用户向开发 | `user/develop/**`、`user/guide/**` | 基础/框架/实践/指南 |
 | 配置/运行 | `config-catalog.md`、`development.md`、`testing.md`、`rescope.md`、`api-gateway.md`、`glossary.md` | 配置目录、开发、测试、API 协议、术语 |
@@ -142,6 +143,11 @@ export function apply(ctx: Context) {
 3. **桥接器与 DSH 的边界**保持清晰：桥接器 = Consumer 外部集成（独立进程 ↔ `/api`）；DSH 本体扩展 = 配置树插件行。
 4. **回复完成信号 = `turn/end`**（官方轮次流程确认，桥接器已按此实现）。
 5. 钉钉消息发送可建模成 waterfall：真正发送在 built-in，审批/脱敏/重试/限流作为 listener 注入。
+6. **自研定时任务实战铁律（2026-08-18 事故后新增，详 [CRON-SCHEDULER-INCIDENT.md](./CRON-SCHEDULER-INCIDENT.md)）**：
+   - 绝不向 session 日志写自定义事件类型（`cron/dispatch` 会触发 `SessionFormatUnsupportedError`，导致整个会话历史无法加载；当前 rc.6 `append()` 也无法写 `ignorable` 信封）。
+   - 跨 tick/跨重启的状态（如 `lastFiredAt`）必须落在 workspace 内可写文件（`workspace-write` 只放行 `header.cwd` 子树 + `/tmp`），不能依赖 `~/.dsh/` 等沙箱外路径——否则回写失败 → 每次 tick 重建状态 → 死循环重复触发。
+7. **钉钉 Stream 入站可靠性铁律（2026-08-18 静默断连后新增）**：第三方 IM SDK 的 `autoReconnect` 只响应明确 close/error，**不治半开连接**（网络静默断、socket 无事件、connected 仍 true）；生产可靠性必须自加「健康哨兵 + 兜底强制重建 + connect 超时」三层守护（实现与细节见 [LESSONS.md](./LESSONS.md) Root Cause 2b）。
+8. **已归档会话显示铁律（2026-08-18 新增）**：DSH 的 `workspace.list` 会在 `archivedSessionIds` 里通告已归档会话，但**工作区的 `sessionIds` 仍包含它们**（归档不从工作区摘除）；对外展示/投递（如 `/list`、`/use`）必须用 `archivedSessionIds` 手动过滤，否则会看到"history unavailable"的归档会话死尸。
 
 ---
 

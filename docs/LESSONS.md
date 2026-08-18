@@ -76,6 +76,25 @@ TERMINATE SOCKET: Ping Pong does not transfer heartbeat within heartbeat interva
 - **不要盲目开启第三方连接的心跳**：先了解它的误杀阈值和你的网络环境。
 - 日志里出现 `TERMINATE SOCKET` 这类"插件主动杀连接"的痕迹，第一反应是它的健康检查误判，而不是真断网。
 
+### Root Cause 2b（2026-08-18 新发现）：Stream 静默断连 —— SDK autoReconnect 治不了半开连接
+
+**现象**：桥接器进程一直活着、DSH 出站推送正常（走持久 webhook），但**钉钉入站彻底失效约 13 小时**：
+- 最后一次 `[dingtalk] Stream connected` 停留在昨天 14:18，之后再无 `[recv]`（入站消息）记录；
+- 用户在钉钉发 `/status` 完全无反应，重启 DSH 也不恢复（连接在桥接器进程内，与 DSH 无关）；
+- 只有**重启桥接器进程**（launchctl kickstart）才恢复。
+
+**根因**：SDK（dingtalk-stream v2.1.5）的 `autoReconnect:true` 只在 WebSocket 触发 `close`/`error` 时重连；但网络静默中断（代理/NAT/防火墙把空闲 TCP 掐掉）时，socket 对象**不触发任何事件**、`connected` 仍为 true —— 即**半开连接（half-open）**。SDK 的自愈机制对半开无效，于是进程活着、连接却早已是死连，消息进不来。
+
+**修复（三层守护，已实现并过测试）**：
+1. **健康哨兵**（每 30s）：周期检查 `client.connected`，若 SDK 已感知断开则主动 `_rebuild()` 重连（指数退避失连次数）。
+2. **兜底强制重建**（每 15min）：无论 SDK 认为连接是否健康，都强制 `disconnect()+connect()` 重建 —— 专治"半开连接"（SDK 无感知但数据不通）。
+3. **连接超时保护**（30s）：`Promise.race` 包裹 SDK `connect()`，防止 `_connect()` 因网络 hang 永不 resolve、`_connecting` 永久占用导致后续无法重连；同时补上 SDK `error`/`close` 事件日志（原先无这些日志，断连是盲区）。
+
+**经验**：
+- **不要相信第三方 IM SDK 的 autoReconnect 能覆盖所有断连**：它只响应"明确的 close/error"，对半开连接（静默断连）无效。生产级可靠性必须自己加**兜底定时重建**，代价仅是周期性的一次瞬时重连，远好于永久失联。
+- 判断是"半开"还是"SDK 感知断开"：看 `client.connected` + 有无 close/error 日志。无日志且 connected=true 却收不到消息 = 半开。
+- 入站与出站是**两条独立通道**：出站用持久 webhook（可靠），入站靠 Stream（易断）。出站正常不代表入站没死 —— 排查时要分别看两侧日志。
+
 ---
 
 ### Root Cause 3（最关键）：订阅通道错误 —— EVENT vs CALLBACK
@@ -182,6 +201,31 @@ active 目标（旧值 `64dc23b2`），桥接器 `_tryActivePush` 只匹配 acti
 - 桥接器日志 `[push] 最终结果稳定 candidate ...` → `[push] 已主动推送` = 成功。
 - `[push] ... 无持久 webhook` = 该会话还没给过回调。
 
+### 关键踩坑：自研 cron 插件把历史搞挂 + 定时任务死循环（2026-08-18）
+
+**现象**：① 会话历史报 `SessionFormatUnsupportedError ... contains event type
+"cron/dispatch" unknown to this harness`，历史无法加载；② 定时任务每整点命中两次、
+连续数小时不停（"死循环"）。
+
+**根因（一条链，两个面）**：
+- **会话日志污染**：插件每次触发往 `agent.session.append('cron/dispatch', {...})` 写
+  自定义事件。这不是 DSH 官方类型，`assertEventsSupported()` 遇白名单外且未标
+  `ignorable:true` 的事件会**拒绝解释整份日志**（宁可拒绝，不可错建）。
+- **lastFired 回写失败 → 死循环**：插件把 `lastFiredAt` 写回 `~/.dsh/cron-schedules.json`，
+  但 `workspace-write` 沙箱只放行 `header.cwd` 子树 + `/tmp`（`writableRoots`），
+  `~/.dsh` 在沙箱外 → `ctx.fs.writeText` 抛 `FS_SANDBOX_DENIED` 被吞掉 → 每次 tick
+  从配置重建 `TriggerState`（无 lastFired）→ 同一命中点每 30s 被重新找到 → 死循环。
+  诡异点：`session.append`（审计事件）能写进日志、`ctx.fs`（回写）却写不进，两通道
+  权限不同。
+
+**修复（完整细节见 [CRON-SCHEDULER-INCIDENT.md](./CRON-SCHEDULER-INCIDENT.md)）**：
+- 删除 `session.append('cron/dispatch')`，审计改 logger；
+- lastFired 状态落到 workspace 内 `config/cron-scheduler-state.json`（可写）；
+- 离线给历史日志的 `cron/dispatch` 补 `ignorable:true` 信封，恢复加载（已全部验证）。
+
+**铁律**：① 不向 session 日志写非官方自定义事件；② 跨 tick 状态放 workspace 内可写
+路径；③ 写失败别静默吞（`FS_SANDBOX_DENIED` 是设计问题不是 IO 抖动）。
+
 ---
 
 ## 三、方法论沉淀
@@ -234,9 +278,9 @@ active 目标（旧值 `64dc23b2`），桥接器 `_tryActivePush` 只匹配 acti
 
 | 文件 | 改进 |
 | --- | --- |
-| `src/dingtalk-client.js` | `registerCallbackListener(TOPIC_ROBOT)` + 手动 ACK；去掉对 `registered` 的依赖；`keepAlive:false` |
+| `src/dingtalk-client.js` | `registerCallbackListener(TOPIC_ROBOT)` + 手动 ACK；去掉对 `registered` 的依赖；`keepAlive:false`；**2026-08-18 加三层连接守护**（健康哨兵 30s / 兜底强制重建 15min / connect 超时保护 30s + SDK error/close 日志） |
 | `src/dsh-client.js` | `assistantText` 吃完整事件（`data.message`）；非关键事件（chunk）不刷屏日志；seq 去重 + 丢弃日志 |
-| `src/bridge.js` | 三处诊断日志（`[recv]`/`[reply]`）；`_rawText` 只用于日志；`replyTargets` 双键路由（convId 和 dshSessionId） |
+| `src/bridge.js` | 三处诊断日志（`[recv]`/`[reply]`）；`_rawText` 只用于日志；`replyTargets` 双键路由（convId 和 dshSessionId）；**2026-08-18 加已归档会话过滤**（`/list`、`/use`、`/sched` 均剔除 `workspace.list` 的 `archivedSessionIds`，避免把归档会话展示/投递） |
 | `docs/DEPLOYMENT.md` | SDK ≥ 2.1.5 版本要求说明 |
 
 ---

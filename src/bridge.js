@@ -186,6 +186,24 @@ export class Bridge {
     }
   }
 
+  /**
+   * 获取全局已归档会话 id 集合（workspace.list 的 archivedSessionIds）。
+   * 用于 /list、/use 过滤：已归档的工作区会话不应再展示/投递（历史不可用）。
+   */
+  async _archivedSet() {
+    const { archivedSessionIds } = await this.dsh.listWorkspaces().catch(() => ({ archivedSessionIds: [] }));
+    return new Set(archivedSessionIds || []);
+  }
+
+  /** 过滤掉已归档会话后的工作区列表（每个工作区保留原结构，只剔除 archived id）。 */
+  _visibleWorkspaces(workspaces, archivedSet) {
+    if (!archivedSet || archivedSet.size === 0) return workspaces;
+    return workspaces.map((w) => ({
+      ...w,
+      sessionIds: (w.sessionIds || []).filter((sid) => !archivedSet.has(sid)),
+    }));
+  }
+
   /** /status: 显示当前投递目标。 */
   async _handleStatus(msg) {
     const convId = msg.conversationId;
@@ -213,8 +231,10 @@ export class Bridge {
     const convId = msg.conversationId;
     const arg = text.replace(/^\/(list|列表)\b/, '').trim();
     const active = this.mapper.getActive(convId);
-    const { items: workspaces } = await this.dsh.listWorkspaces().catch(() => ({ items: [] }));
-    const sessions = await this.dsh.listSessions().catch(() => []);
+    const { items: rawWorkspaces } = await this.dsh.listWorkspaces().catch(() => ({ items: [] }));
+    const archivedSet = await this._archivedSet();
+    const workspaces = this._visibleWorkspaces(rawWorkspaces, archivedSet);
+    const sessions = (await this.dsh.listSessions().catch(() => [])).filter((s) => !archivedSet.has(s.sessionId));
 
     // 建立 sessionId -> session 摘要 的索引
     const byId = new Map(sessions.map((s) => [s.sessionId, s]));
@@ -280,13 +300,15 @@ export class Bridge {
       await this._replyText(msg, '用法：/use <序号|路径关键词|会话ID>\n示例：/use 2  （用 /list 查看序号）\n     /use deepseek-harness  （按路径关键词）');
       return;
     }
-    const sessions = await this.dsh.listSessions().catch(() => []);
+    const archivedSet = await this._archivedSet();
+    const sessions = (await this.dsh.listSessions().catch(() => [])).filter((s) => !archivedSet.has(s.sessionId));
     let target = null;
 
     // 1) 序号匹配：全局连续序号 = 工作区顺序 → 工作区内会话顺序（与 /list 一致）
     const idx = parseInt(arg, 10);
     if (!Number.isNaN(idx) && idx >= 1) {
-      const { items: workspaces } = await this.dsh.listWorkspaces().catch(() => ({ items: [] }));
+      const { items: rawWorkspaces } = await this.dsh.listWorkspaces().catch(() => ({ items: [] }));
+      const workspaces = this._visibleWorkspaces(rawWorkspaces, archivedSet);
       const byId = new Map(sessions.map((s) => [s.sessionId, s]));
       const ordered = [];
       const seen = new Set();
@@ -399,7 +421,8 @@ export class Bridge {
 
   /** 找到承载 schedule（有 schedule/change 事件）的会话 id。 */
   async _findScheduleSession() {
-    const sessions = await this.dsh.listSessions().catch(() => []);
+    const archivedSet = await this._archivedSet();
+    const sessions = (await this.dsh.listSessions().catch(() => [])).filter((s) => !archivedSet.has(s.sessionId));
     for (const s of sessions) {
       const sid = s.sessionId;
       const r = await this.dsh.sessionHistory(sid, { limit: 500, maxPages: 2 }).catch(() => null);
@@ -414,7 +437,8 @@ export class Bridge {
    * every 任务的 dispatch 不结束（周期继续），只推进 scheduledAt。
    */
   async _foldAllSchedules() {
-    const sessions = await this.dsh.listSessions().catch(() => []);
+    const archivedSet = await this._archivedSet();
+    const sessions = (await this.dsh.listSessions().catch(() => [])).filter((s) => !archivedSet.has(s.sessionId));
     // id -> task（多个会话按创建顺序合并，id 全局唯一）
     const byId = new Map();
     let found = false;

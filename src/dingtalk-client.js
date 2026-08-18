@@ -31,38 +31,145 @@ export class DingTalkClient extends EventEmitter {
     this.appKey = opts.appKey;
     this.appSecret = opts.appSecret;
     this.log = opts.log || ((line) => console.log(`[dingtalk] ${line}`));
+    // 连接守护配置（默认值；可通过 opts 覆盖）
+    //  - healthCheckMs:   健康哨兵周期（0 关闭哨兵）
+    //  - forceRebuildMs:  兜底强制重建周期（0 关闭；必须 > 0 才能治半开连接）
+    //  - connectTimeoutMs: connect() 超时保护，防止 _connect() 永久 pending
+    this.healthCheckMs = opts.healthCheckMs ?? 30_000;
+    this.forceRebuildMs = opts.forceRebuildMs ?? 15 * 60_000;
+    this.connectTimeoutMs = opts.connectTimeoutMs ?? 30_000;
     this.client = null;
+    // 守护定时器句柄
+    this._healthTimer = null;
+    this._rebuildTimer = null;
+    this._connecting = false;
+    this._userDisconnected = false;
+    this._failStreak = 0;
+    // 供测试注入的时钟/sleep
+    this._now = opts._now || (() => Date.now());
+    this._sleep = opts._sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+    // 供测试注入的 DWClient 构造器（默认用真实 SDK）；必须暴露注册回调所需方法
+    this._DWClient = opts.DWClient || DWClient;
   }
 
-  /** 建立 Stream 连接并订阅机器人消息（CALLBACK 通道）。 */
+  /**
+   * 建立 Stream 连接并订阅机器人消息（CALLBACK 通道）。
+   * 连接后启动两层守护：
+   *  1) 健康哨兵：周期性检查 connected；若 SDK 已自判断开则主动重连。
+   *  2) 兜底强制重建：即使半开连接（SDK 无感知、connected 仍 true 但数据不通），
+   *     也定期显式重建，保证入站通道最终必然恢复。
+   */
   connect() {
-    this.client = new DWClient({
+    if (this._connecting) return this;
+    this._userDisconnected = false;
+    this._connecting = true;
+    // 立即建立（不 await，保持原调用语义）
+    this._doConnect().catch((err) => this.log(`Stream connect error: ${err?.message || err}`));
+    // 启动守护（幂等：clear 后再设）
+    this._startGuards();
+    return this;
+  }
+
+  async _doConnect() {
+    if (this._userDisconnected) return;
+    const client = new (this._DWClient)({
       clientId: this.appKey,
       clientSecret: this.appSecret,
       // keepAlive 保持 false（SDK 默认）：应用层 ping/pong 心跳在某些网络环境
       // （代理/NAT）会误判超时并 TERMINATE SOCKET，导致反复断连丢消息。
       // 钉钉服务端有系统级 KEEPALIVE，不依赖应用层心跳。
+      // autoReconnect: SDK v2.1.5 默认 true，close/error 时 1s 自动重连；
+      //   但我们有兜底强制重建，即使自动重连失效也能恢复。
       keepAlive: false,
     });
+    this.client = client;
 
     // 关键：注册 CALLBACK 订阅（机器人消息走 CALLBACK 通道，不是 EVENT）。
-    // registerAllEventListener 订阅的是 EVENT 通道，收不到机器人消息。
-    this.client.registerCallbackListener(TOPIC_ROBOT, (msg) => this._onCallback(msg));
+    client.registerCallbackListener(TOPIC_ROBOT, (msg) => this._onCallback(msg));
 
-    this.client
-      .connect()
-      .then(() => {
+    // 监听 SDK socket 层的 error/close，输出日志（当前无这些事件的日志，盲区）
+    client.on('error', (err) => this.log(`SDK socket error: ${err?.message || err}`));
+    client.on('close', () => this.log('SDK socket closed'));
+
+    // connect() 带超时保护：SDK 的 getEndpoint/_connect 可能因网络 hang
+    // 而不 reject，导致 _connecting 永久占用、后续无法重连。
+    try {
+      await Promise.race([
+        client.connect(),
+        this._sleep(this.connectTimeoutMs).then(() => {
+          throw new Error(`connect timeout after ${this.connectTimeoutMs}ms`);
+        }),
+      ]);
+      // SDK connect() 正常返回 = socket 已 open（见 _connect 实现）
+      if (!this._userDisconnected) {
+        this._failStreak = 0;
         this.log('Stream connected');
-        // 注意：不要用 SDK 的 registered 字段判断注册状态——
-        // 实测（含 openhermit 成功用的 SDK 2.0.4）该字段在钉钉当前网关下
-        // 始终为 false（服务端不发送对应 SYSTEM 确认）。连接成功即认为就绪。
-      })
-      .catch((err) => this.log(`Stream connect error: ${err?.message || err}`));
-    return this;
+        this.emit('connected');
+      }
+    } catch (err) {
+      if (this._userDisconnected) return;
+      this._failStreak += 1;
+      this.log(`Stream connect error: ${err?.message || err}（第 ${this._failStreak} 次失败，稍后哨兵/重建会重试）`);
+      // 即使失败也交给守护定时器重试（这里不立即 fire，避免风暴）
+    } finally {
+      this._connecting = false;
+    }
+  }
+
+  /** 由守护触发的一次性强制重连。 */
+  async _rebuild() {
+    if (this._connecting || this._userDisconnected) return;
+    if (this.client) {
+      try { this.client.disconnect(); } catch { /* noop */ }
+      this.client = null;
+    }
+    this.log(`[guard] 强制重建 Stream 连接（失败连续 ${this._failStreak} 次）…`);
+    await this._doConnect();
+    if (!this._userDisconnected && !this.client?.connected) {
+      // 重建后仍未连上，健康哨兵会再试（指数退避在哨兵处处理）
+    }
+  }
+
+  /** 健康哨兵：按固定周期检查；检测到异常时重连，并按失败次数退避。 */
+  _startGuards() {
+    this._clearGuards();
+    if (this.healthCheckMs > 0) {
+      this._healthTimer = setInterval(() => {
+        if (this._userDisconnected || this._connecting) return;
+        const c = this.client;
+        const dead = !c || c.connected !== true;
+        if (dead) {
+          // connected=false（SDK 已感知断开但自动重连可能已放弃）
+          this._failStreak += 1;
+          this.log(`[guard] 检测到连接已断开（connected=${c?.connected}），触发重连（第 ${this._failStreak} 次异常）`);
+          this._rebuild().catch((e) => this.log(`[guard] 重连失败: ${e?.message || e}`));
+        } else {
+          // 连接本身 OK；连续成功则刷新失败计数（半开连接由 forceRebuild 兜底）
+          if (this._failStreak > 0) this._failStreak = Math.max(0, this._failStreak - 1);
+        }
+      }, this.healthCheckMs);
+      // 哨兵定时器不阻止进程退出
+      if (typeof this._healthTimer?.unref === 'function') this._healthTimer.unref();
+    }
+    if (this.forceRebuildMs > 0) {
+      this._rebuildTimer = setInterval(() => {
+        if (this._userDisconnected || this._connecting) return;
+        // 兜底：无论 SDK 认为连接是否健康，周期性强制重建。
+        // 根治半开连接（SDK 无事件、connected 仍 true、但数据不通）。
+        this._rebuild().catch((e) => this.log(`[guard] 强制重建失败: ${e?.message || e}`));
+      }, this.forceRebuildMs);
+      if (typeof this._rebuildTimer?.unref === 'function') this._rebuildTimer.unref();
+    }
+  }
+
+  _clearGuards() {
+    if (this._healthTimer) { clearInterval(this._healthTimer); this._healthTimer = null; }
+    if (this._rebuildTimer) { clearInterval(this._rebuildTimer); this._rebuildTimer = null; }
   }
 
   disconnect() {
-    if (this._regTimer) { clearTimeout(this._regTimer); this._regTimer = null; }
+    this._userDisconnected = true;
+    this._clearGuards();
     if (this.client) {
       try { this.client.disconnect(); } catch { /* noop */ }
       this.client = null;
@@ -71,8 +178,11 @@ export class DingTalkClient extends EventEmitter {
 
   /** 透传 SDK 的连接/断开事件。 */
   onEvent(name, fn) {
-    if (!this.client) return;
-    this.client.on(name, fn);
+    if (this.client) {
+      this.client.on(name, fn);
+    } else {
+      this.once('connected', () => { this.client?.on(name, fn); });
+    }
   }
 
   /**
