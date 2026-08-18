@@ -146,3 +146,31 @@ test('nextOccurrences: 5 字段复杂表达式 每月1日周一0点', () => {
   const from = new Date('2026-08-17T00:00:00Z')
   assert.equal(utc(nextOccurrence(spec, from)), '2026-08-24T00:00:00.000Z')
 })
+
+test('nextOccurrence: 时区生效——上海 10 点 = UTC 02:00（而非 UTC 10:00）', () => {
+  const spec = parseCron('0 10 * * *')
+  const from = new Date('2026-08-17T00:00:00.000Z') // 上海 08:00，未到 10:00
+  const next = nextOccurrence(spec, from, 'Asia/Shanghai')
+  assert.equal(utc(next), '2026-08-17T02:00:00.000Z')
+})
+
+test('nextOccurrence: 时区生效——上海 10 点已过 → 次日 UTC 02:00', () => {
+  const spec = parseCron('0 10 * * *')
+  const from = new Date('2026-08-17T03:00:00.000Z') // 上海 11:00，已过 10:00
+  const next = nextOccurrence(spec, from, 'Asia/Shanghai')
+  assert.equal(utc(next), '2026-08-18T02:00:00.000Z')
+})
+
+test('nextOccurrence: 时区生效——上海 0 点跨日 = UTC 前一日 16:00', () => {
+  const spec = parseCron('0 0 * * *')
+  const from = new Date('2026-08-17T10:00:00.000Z') // 上海 18:00，已过 0 点
+  const next = nextOccurrence(spec, from, 'Asia/Shanghai')
+  assert.equal(utc(next), '2026-08-17T16:00:00.000Z') // 上海 8-18 00:00
+})
+
+test('nextOccurrence: 时区生效——纽约（8月夏令时 UTC-4）10 点 = UTC 14:00', () => {
+  const spec = parseCron('0 10 * * *')
+  const from = new Date('2026-08-17T00:00:00.000Z') // 纽约 8-16 20:00，未到 10:00
+  const next = nextOccurrence(spec, from, 'America/New_York')
+  assert.equal(utc(next), '2026-08-17T14:00:00.000Z')
+})

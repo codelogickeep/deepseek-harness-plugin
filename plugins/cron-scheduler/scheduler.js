@@ -109,7 +109,7 @@ export class TriggerState {
   /** 计算某任务在 now 之后的下一次触发（UTC Date）。 */
   nextFor(task, now = new Date()) {
     if (!task.enabled) return undefined
-    return nextOccurrence(task.spec, now)
+    return nextOccurrence(task.spec, now, task.timezone)
   }
 
   /**
@@ -122,7 +122,7 @@ export class TriggerState {
       .filter((t) => t.enabled)
       .map((t) => ({
         task: t,
-        at: nextOccurrence(t.spec, now),
+        at: nextOccurrence(t.spec, now, t.timezone),
       }))
       .filter((w) => w.at.getTime() > nowMs)
       .sort((a, b) => a.at - b.at)
@@ -157,8 +157,8 @@ export class TriggerState {
         // 无记录：首次。只回看 lookback 窗口，避免立刻补历史轰炸
         fromMs = nowMs - lookbackMs
       }
-      // 找 (fromMs, nowMs] 之间第一个 cron 命中点
-      const hit = findHitInWindow(task.spec, fromMs, nowMs)
+      // 找 (fromMs, nowMs] 之间第一个 cron 命中点（按任务时区）
+      const hit = findHitInWindow(task.spec, fromMs, nowMs, task.timezone)
       if (hit !== undefined) {
         results.push({ task, at: hit })
       }
@@ -181,17 +181,21 @@ export class TriggerState {
 
 /**
  * 在 (fromMs, toMs] 开区间内找第一个 cron 命中点（分钟级精确）。
+ * @param {object} spec
+ * @param {number} fromMs 起点毫秒（不含）
+ * @param {number} toMs 终点毫秒（含）
+ * @param {string} [timezone] IANA 时区（缺省 UTC）
  * 返回 Date 或 undefined。
  * 实现：从 fromMs 的下一分钟开始，逐分钟/跳跃式检查，直到 toMs。
  *  为效率：先找 fromMs 之后 cron 的下一个 occurrence（nextOccurrence 支持快速跳），
  *  若 next <= toMs 且有命中 → 返回；否则窗口内无命中。
  */
-export function findHitInWindow(spec, fromMs, toMs) {
+export function findHitInWindow(spec, fromMs, toMs, timezone) {
   if (toMs - fromMs <= 0) return undefined
   // fromMs 向下取整到分钟，然后找 after 的下一个 occurrence
   const fromDate = new Date(fromMs)
   try {
-    let cursor = nextOccurrence(spec, fromDate)
+    const cursor = nextOccurrence(spec, fromDate, timezone)
     // nextOccurrence 返回严格 > fromDate；若它 ≤ toMs 即有命中
     if (cursor.getTime() <= toMs) {
       return cursor

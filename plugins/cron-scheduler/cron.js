@@ -112,85 +112,79 @@ function isStarField(field) {
   return String(field).trim() === '*'
 }
 
-/** 判断某天是否匹配「日」和「周」字段（cron 语义：两者都指定时用 OR；一方是 * 则只取另一方） */
-function dayMatches(spec, year, month, dayOfMonth) {
-  const domStar = spec.daysOfMonthIsStar === true
-  const dowStar = spec.daysOfWeekIsStar === true
-  const date = new Date(Date.UTC(year, month - 1, dayOfMonth))
-  const dow = date.getUTCDay()
+/** 按 IANA 时区缓存 Intl.DateTimeFormat（避免逐分钟重复创建，性能关键）。 */
+const _dtfCache = new Map()
 
-  if (domStar && dowStar) return true
-  if (domStar) return spec.daysOfWeek.includes(dow)
-  if (dowStar) return spec.daysOfMonth.includes(dayOfMonth)
-  // 都指定：OR 语义（标准 cron）
-  return spec.daysOfMonth.includes(dayOfMonth) || spec.daysOfWeek.includes(dow)
+/** 把 UTC 时刻换算成目标时区的本地分量（year/month/day/hour/minute）。 */
+function zonedParts(timezone, date) {
+  let dtf = _dtfCache.get(timezone)
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    })
+    _dtfCache.set(timezone, dtf)
+  }
+  const map = {}
+  for (const p of dtf.formatToParts(date)) map[p.type] = p.value
+  let hour = parseInt(map.hour, 10)
+  if (hour === 24) hour = 0 // 极少数 ICU 实现午夜用 24
+  return {
+    year: parseInt(map.year, 10),
+    month: parseInt(map.month, 10),
+    day: parseInt(map.day, 10),
+    hour,
+    minute: parseInt(map.minute, 10),
+  }
 }
 
 /**
- * 计算给定时刻之后（含该时刻？不含）的下一次触发。
+ * 判断某日历日是否匹配「日」和「周」字段（cron 语义：两者都指定时用 OR；一方是 * 则只取另一方）。
+ * 星期几是日历日的固有属性（不随时区变化），直接用 zoned 的 year/month/day 计算。
+ */
+function zonedDayMatches(spec, p) {
+  const domStar = spec.daysOfMonthIsStar === true
+  const dowStar = spec.daysOfWeekIsStar === true
+  if (domStar && dowStar) return true
+  const dow = new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay()
+  if (domStar) return spec.daysOfWeek.includes(dow)
+  if (dowStar) return spec.daysOfMonth.includes(p.day)
+  // 都指定：OR 语义（标准 cron）
+  return spec.daysOfMonth.includes(p.day) || spec.daysOfWeek.includes(dow)
+}
+
+/**
+ * 计算给定时刻之后（不含）的下一次触发。
  * @param {object} spec parseCron 的结果
  * @param {Date} after 从这一刻之后找（不含这一刻本身）
+ * @param {string} [timezone] IANA 时区（如 "Asia/Shanghai"）；缺省按 UTC。
  * @returns {Date} 下一次触发时刻（可能跨月/年向后找，最远找 5 年）
  * @throws {Error} 5 年内找不到（配置错误，如 2月30日）
  */
-export function nextOccurrence(spec, after) {
-  // 从 after 的分钟开始向上找。为了避免错过「after 所在分钟内已过」，
-  // 我们从 after 的下一分钟整点开始。
-  let year = after.getUTCFullYear()
-  let month = after.getUTCMonth() + 1
-  let day = after.getUTCDate()
-  let hour = after.getUTCHours()
-  let minute = after.getUTCMinutes() + 1
+export function nextOccurrence(spec, after, timezone) {
+  // cron 的「时/分/日/月/周」都按 timezone 解释。在 UTC 轴上从 after 的
+  // 下一分钟整点逐分钟推进，对每个候选 UTC 时刻换算成 timezone 的本地
+  // 分量来匹配——这样「上海 10:00」才命中 UTC 02:00，而不是误命中 UTC 10:00。
+  const tz = timezone || 'UTC'
+  let cursor = new Date(Math.floor(after.getTime() / 60000) * 60000 + 60000)
 
-  const rollMinute = () => {
-    if (minute > 59) { minute = 0; hour += 1 }
-    if (hour > 23) { hour = 0; day += 1 }
-  }
-
-  // 迭代上限：最多找 5 年（约 1826 天），防死循环
-  let guard = 0
-  const maxGuard = 1826 * 24 * 60 // 每轮最多推进到分钟级；这里按天推进时重置
-
-  while (guard < maxGuard) {
-    // 检查当前 (year, month, day, hour, minute) 是否匹配
-    const monthOk = spec.months.includes(month)
-    const dayOk = monthOk && dayMatches(spec, year, month, day)
-    const hourOk = spec.hours.includes(hour)
-    const minuteOk = spec.minutes.includes(minute)
-
+  // 迭代上限：最多找 5 年（约 1826 天 * 24 * 60 分钟），防死循环
+  const maxGuard = 1826 * 24 * 60
+  for (let guard = 0; guard < maxGuard; guard += 1) {
+    const p = zonedParts(tz, cursor)
+    const monthOk = spec.months.includes(p.month)
+    const dayOk = monthOk && zonedDayMatches(spec, p)
+    const hourOk = spec.hours.includes(p.hour)
+    const minuteOk = spec.minutes.includes(p.minute)
     if (dayOk && hourOk && minuteOk) {
-      const result = new Date(Date.UTC(year, month - 1, day, hour, minute, 0, 0))
-      // 处理闰秒/日界（如 2月30被 UTC 滚动到 3月1）：校验回读
-      if (
-        result.getUTCFullYear() === year
-        && result.getUTCMonth() + 1 === month
-        && result.getUTCDate() === day
-        && result.getUTCHours() === hour
-        && result.getUTCMinutes() === minute
-      ) {
-        return result
-      }
-      // 否则该候选非法（被 UTC 修正），继续推进
+      return new Date(cursor.getTime())
     }
-
-    // 推进：先推进分钟，若跨小时/天则进位
-    minute += 1
-    let carry = false
-    if (minute > 59) { minute = 0; hour += 1; carry = true }
-    if (hour > 23) { hour = 0; day += 1 }
-    if (day > daysInMonth(year, month)) {
-      day = 1
-      month += 1
-      if (month > 12) { month = 1; year += 1 }
-    }
-    guard += 1
+    cursor = new Date(cursor.getTime() + 60000)
   }
 
   throw new Error('cron 表达式在 5 年内没有下一次触发（请检查配置）')
-}
-
-function daysInMonth(year, month) {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate()
 }
 
 /**

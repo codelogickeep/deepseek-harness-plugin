@@ -200,7 +200,7 @@ test('主动推送：DSH 无回复目标的 assistant 消息 → 钉钉（持久
   const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-'));
   const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
   const bridge = new Bridge({ dingtalk: ding, mapper, config: mkConfig(), log: () => {} });
-  bridge._sentSeq = new Set(); // 独立去重集合，避免跨测试干扰
+  bridge._sentSeq = new Map(); // 独立去重（sessionId -> Set<seq>），避免跨测试干扰
 
   // 1. 先有钉钉会话（持久 webhook + active 投递目标为该 DSH 会话）
   const convId = `cid-push-${Date.now()}`;
@@ -252,7 +252,7 @@ test('主动推送：非定时提醒的 agent 自发言不推', async () => {
   const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-non-'));
   const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
   const bridge = new Bridge({ dingtalk: ding, mapper, config: mkConfig(), log: () => {} });
-  bridge._sentSeq = new Set();
+  bridge._sentSeq = new Map();
 
   const convId = `cid-pushnon-${Date.now()}`;
   mapper.setWebhook(convId, `http://fake/${convId}`);
@@ -279,7 +279,7 @@ test('主动推送：enableActivePush=false 时跳过', async () => {
   const cfg = mkConfig();
   cfg.bridge.enableActivePush = false;
   const bridge = new Bridge({ dingtalk: ding, mapper, config: cfg, log: () => {} });
-  bridge._sentSeq = new Set();
+  bridge._sentSeq = new Map();
 
   const convId = `cid-pushoff-${Date.now()}`;
   mapper.setWebhook(convId, `http://fake/${convId}`);
@@ -304,7 +304,7 @@ test('主动推送：历史使用过该会话（非 active）也兜底推送', a
   const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-hist-'));
   const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
   const bridge = new Bridge({ dingtalk: ding, mapper, config: mkConfig(), log: () => {} });
-  bridge._sentSeq = new Set();
+  bridge._sentSeq = new Map();
 
   const convId = `cid-pushhist-${Date.now()}`;
   mapper.setWebhook(convId, `http://fake/${convId}`);
@@ -340,7 +340,7 @@ test('主动推送：只推最终结果（中间输出不推）', async () => {
   const tmpdirName = mkdtempSync(join(tmpdir(), 'dshbridge-push-final-'));
   const mapper = new SessionMapper({ file: join(tmpdirName, 'map.json'), log: () => {} });
   const bridge = new Bridge({ dingtalk: ding, mapper, config: mkConfig(), log: () => {} });
-  bridge._sentSeq = new Set();
+  bridge._sentSeq = new Map();
 
   const convId = `cid-pushfinal-${Date.now()}`;
   mapper.setWebhook(convId, `http://fake/${convId}`);

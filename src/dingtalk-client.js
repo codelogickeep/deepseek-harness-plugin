@@ -63,7 +63,7 @@ export class DingTalkClient extends EventEmitter {
   connect() {
     if (this._connecting) return this;
     this._userDisconnected = false;
-    this._connecting = true;
+    // _connecting 的置位统一在 _doConnect 开头幂等处理（见 #4 修复）
     // 立即建立（不 await，保持原调用语义）
     this._doConnect().catch((err) => this.log(`Stream connect error: ${err?.message || err}`));
     // 启动守护（幂等：clear 后再设）
@@ -73,6 +73,10 @@ export class DingTalkClient extends EventEmitter {
 
   async _doConnect() {
     if (this._userDisconnected) return;
+    // #4 修复：_connecting 在这里幂等置位，覆盖 connect() 与 _rebuild() 两条入口，
+    // 确保 connect 卡满超时期间，哨兵 timer 不会再次进入 _rebuild 造成并发双连接。
+    if (this._connecting) return;
+    this._connecting = true;
     const client = new (this._DWClient)({
       clientId: this.appKey,
       clientSecret: this.appSecret,

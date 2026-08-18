@@ -33,9 +33,9 @@ export class Bridge {
     this.pending = new Set();
     /** dshSessionId -> { conversationId, msg } 最近一次发送者，用于回复路由 */
     this.replyTargets = new Map();
-    /** 统一回复/推送候选（等 turn/end 只发最终结果）与兜底超时 */
-    this._replyCandidate = null;
-    this._replyTimeout = null;
+    /** 统一回复/推送候选（等 turn/end 只发最终结果）与兜底超时：per-session 隔离，避免多会话并发互相覆盖 */
+    this._replyCandidates = new Map();
+    this._replyTimeouts = new Map();
     /** 处于「定时提醒回复窗口」的 sessionId 集合（只推这些会话的主动回复） */
     this._scheduleReminderSessions = new Set();
     this._onMuxEvent = (ev) => this._handleSessionEvent(ev);
@@ -54,8 +54,9 @@ export class Bridge {
   stop() {
     this.dingtalk?.off?.('message', this._onDingMessage);
     this.dsh?.off?.('session/event', this._onMuxEvent);
-    if (this._replyTimeout) { clearTimeout(this._replyTimeout); this._replyTimeout = null; }
-    this._replyCandidate = null;
+    for (const t of this._replyTimeouts.values()) clearTimeout(t);
+    this._replyTimeouts.clear();
+    this._replyCandidates.clear();
     this._scheduleReminderSessions.clear();
   }
 
@@ -562,9 +563,12 @@ export class Bridge {
     this.log(`[reply] assistant/message session=${sessionId} seq=${event?.seq} 文本长度=${text.length}`);
     if (!text) return;
 
-    // 去重：同一条 seq 只投递一次（避免事件重放/桥接器重连导致重复推送）
-    if (this._sentSeq.has(event.seq)) return;
-    this._sentSeq.add(event.seq);
+    // 去重：同一条 seq 只投递一次（避免事件重放/桥接器重连导致重复推送）。
+    // seq 是「每个会话独立递增」的，必须按 sessionId 隔离，否则跨会话误吞。
+    let seen = this._sentSeq.get(sessionId);
+    if (!seen) { seen = new Set(); this._sentSeq.set(sessionId, seen); }
+    if (seen.has(event.seq)) return;
+    seen.add(event.seq);
 
     // 会话的所有输出统一走「候选 → turn/end → 只发最终一条」：
     // 1) 有 replyTarget（用户消息触发的回复）→ 回发该钉钉会话，回发后消费删除 target
@@ -585,29 +589,33 @@ export class Bridge {
       this.log(`[push] session=${sessionId} 不在提醒窗口内，跳过主动推送（只推定时提醒触发）`);
       return;
     }
-    this._replyCandidate = { sessionId, seq, text, target };
+    this._replyCandidates.set(sessionId, { sessionId, seq, text, target });
     this.log(`[reply] 候选 session=${sessionId} seq=${seq} target=${target ? '有(replyTarget)' : '无'}（等待 turn/end 后发最终结果）`);
     this._armReplyTimeout(sessionId);
   }
 
   /** 兜底超时：万一没收到 turn/end（异常中断），超时后也把候选发出，防止消息滞留。 */
   _armReplyTimeout(sessionId) {
-    if (this._replyTimeout) { clearTimeout(this._replyTimeout); this._replyTimeout = null; }
+    const prev = this._replyTimeouts.get(sessionId);
+    if (prev) clearTimeout(prev);
     const fallback = Number(this.config.bridge?.replyFallbackMs) || 60000;
-    this._replyTimeout = setTimeout(() => {
-      this._replyTimeout = null;
-      if (!this._replyCandidate || this._replyCandidate.sessionId !== sessionId) return;
-      this.log(`[reply] 兜底超时(${fallback}ms)未收到 turn/end，仍发送候选 session=${sessionId} seq=${this._replyCandidate.seq}`);
+    const timer = setTimeout(() => {
+      this._replyTimeouts.delete(sessionId);
+      if (!this._replyCandidates.has(sessionId)) return;
+      const cand = this._replyCandidates.get(sessionId);
+      this.log(`[reply] 兜底超时(${fallback}ms)未收到 turn/end，仍发送候选 session=${sessionId} seq=${cand.seq}`);
       this._flushReplyCandidate(sessionId);
     }, fallback);
+    this._replyTimeouts.set(sessionId, timer);
   }
 
   /** 发送暂存的最终候选（turn/end 触发或兜底超时触发）。 */
   _flushReplyCandidate(sessionId) {
-    if (this._replyTimeout) { clearTimeout(this._replyTimeout); this._replyTimeout = null; }
-    const cand = this._replyCandidate;
-    if (!cand || cand.sessionId !== sessionId) return;
-    this._replyCandidate = null;
+    const timer = this._replyTimeouts.get(sessionId);
+    if (timer) { clearTimeout(timer); this._replyTimeouts.delete(sessionId); }
+    const cand = this._replyCandidates.get(sessionId);
+    if (!cand) return;
+    this._replyCandidates.delete(sessionId);
     const from = cand.target ? '钉钉消息回复' : '主动推送';
     this.log(`[reply] 最终结果 session=${cand.sessionId} seq=${cand.seq} (${from}) 文本长度=${cand.text.length}`);
     if (cand.target) {
@@ -696,7 +704,7 @@ export class Bridge {
     return pushed ? `${pushed}\n${cleaned}` : cleaned;
   }
 
-  _sentSeq = new Set();
+  _sentSeq = new Map(); // sessionId -> Set<seq>
 
   _formatReply(text) {
     const prefix = this.config.bridge?.replyPrefix || '';

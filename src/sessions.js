@@ -15,7 +15,7 @@
  * 兼容旧格式 { dshSessionId, createdAt }：加载时自动迁移到新结构。
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export class SessionMapper {
@@ -70,7 +70,10 @@ export class SessionMapper {
     try {
       const obj = Object.fromEntries(this.map.entries());
       mkdirSync(dirname(this.file), { recursive: true, mode: 0o755 });
-      writeFileSync(this.file, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+      // 原子写：先写同目录临时文件，再 rename 覆盖，避免崩溃时写一半损坏映射 JSON
+      const tmp = `${this.file}.tmp-${process.pid}`;
+      writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+      renameSync(tmp, this.file);
     } catch (err) {
       this.log(`save ${this.file} failed: ${err.message}`);
     }
