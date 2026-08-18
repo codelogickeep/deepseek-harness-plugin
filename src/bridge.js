@@ -14,6 +14,13 @@
 
 import { assistantText } from './dsh-client.js';
 
+/**
+ * 桥接会话的首条注入指令：agent 通过钉钉机器人对话时，用户看不到网页交互界面，
+ * 必须直接给出文字回答，禁止调用需要用户点选的交互式工具（如 ask_user_question），
+ * 否则会因无人应答而永久挂起。
+ */
+const BRIDGE_NOTE = '[钉钉桥接提示] 你正在通过钉钉机器人和用户对话，用户只能收到你最终回复的文本，看不到网页/图形界面。请不要调用 ask_user_question 等需要用户在界面交互的工具；信息不足时自行做出最合理的假设并说明，直接给出文字回答。';
+
 export class Bridge {
   /**
    * @param {object} deps
@@ -38,6 +45,8 @@ export class Bridge {
     this._replyTimeouts = new Map();
     /** 处于「定时提醒回复窗口」的 sessionId 集合（只推这些会话的主动回复） */
     this._scheduleReminderSessions = new Set();
+    /** 已注入钉钉桥接提示的 sessionId 集合（每个会话只注入首条，避免历史累积） */
+    this._bridgeNoteInjected = new Set();
     this._onMuxEvent = (ev) => this._handleSessionEvent(ev);
     this._onDingMessage = (msg) => this._handleDingMessage(msg);
   }
@@ -522,10 +531,16 @@ export class Bridge {
     // 记录该 DSH 会话的回复路由
     this.replyTargets.set(dshSessionId, msg);
     try {
+      // 首条消息注入桥接提示，避免 agent 使用需要用户界面交互的工具（钉钉里看不到）
+      let outText = text;
+      if (!this._bridgeNoteInjected.has(dshSessionId)) {
+        this._bridgeNoteInjected.add(dshSessionId);
+        outText = `${BRIDGE_NOTE}\n\n${text}`;
+      }
       const r = await this.dsh.callResult('session.prompt', {
         sessionId: dshSessionId,
         mode: 'queue',
-        content: [{ type: 'text', text }],
+        content: [{ type: 'text', text: outText }],
       });
       if (!r.ok) {
         this.log(`prompt to ${dshSessionId} failed: ${r.error?.code} ${r.error?.message}`);
