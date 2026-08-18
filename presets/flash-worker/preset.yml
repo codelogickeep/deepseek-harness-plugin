@@ -1,0 +1,2 @@
+name: Flash 执行
+description: 在 PTC 模式基础上增加 flash_agent 工具：主 agent（pro）可把具体编码任务委派给 flash 模型子 agent 执行，形成「pro 指挥、flash 执行」的两级开发协同。provider/model 由脚手架安装时注入。

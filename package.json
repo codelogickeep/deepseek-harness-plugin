@@ -10,7 +10,9 @@
     "check:config": "node src/check-config.js",
     "test": "node --test --test-force-exit \"test/*.test.js\"",
     "install:plugins": "node scripts/install-plugins.mjs",
-    "install:plugins:all": "node scripts/install-plugins.mjs"
+    "install:plugins:all": "node scripts/install-plugins.mjs",
+    "install:flash-worker": "node scripts/install-flash-preset.mjs",
+    "setup": "node scripts/setup.mjs"
   },
   "engines": {
     "node": ">=22"

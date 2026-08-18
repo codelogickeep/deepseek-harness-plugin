@@ -16,6 +16,7 @@ status: active
 | **钉钉桥接器** (dsh-dingtalk-bridge) | 在钉钉里直接和 DSH Agent 对话，含会话管理控制台、**主动推送**（定时提醒→钉钉） | 独立进程 ↔ DSH `/api` |
 | **MiniMax 网页搜索** (minimax-search) | 把 MiniMax 搜索注册为 DSH 宿主 Web 搜索 provider，`web_search` 工具直接可用 | DSH 宿主插件 (`cordis.patch.yml`) |
 | **自研定时调度** (cron-scheduler) | 标准 **5 字段 cron 表达式**定时任务（`0 10 * * *`），配置文件驱动、跨重启防重复，到点唤醒指定 Agent 会话 | DSH 宿主插件 (`cordis.patch.yml`) |
+| **flash-worker**（pro 指挥、flash 执行） | 给主 agent 加 `flash_agent` 工具，把具体编码任务委派给 flash 模型子 agent，形成 orchestrator-worker 两级协同 | Agent preset（脚手架渲染安装） |
 
 > 另启用 DSH **官方** `dsh-schedule`（`schedule_create`/`list`/`delete`，after/at/every）
 > 作为补充：临时/会话内定时用官方，固定 cron 节奏用自研 cron-scheduler。区别见 [插件 3](#插件-3自研定时调度-cron-scheduler)。
@@ -31,6 +32,7 @@ status: active
 | 1 | 钉钉桥接器 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) 部署 · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 架构 |
 | 2 | MiniMax 搜索 | [docs/MINIMAX-SEARCH.md](docs/MINIMAX-SEARCH.md) 一键接入 |
 | 3 | 自研定时调度 | [插件 3](#插件-3自研定时调度-cron-scheduler) · 事故复盘 [docs/CRON-SCHEDULER-INCIDENT.md](docs/CRON-SCHEDULER-INCIDENT.md) |
+| 4 | flash-worker（pro 指挥、flash 执行） | [docs/FLASH-WORKER.md](docs/FLASH-WORKER.md) 原理/安装/使用 |
 | — | 脚手架/方法论 | [docs/PLUGIN-ECOSYSTEM.md](docs/PLUGIN-ECOSYSTEM.md) · [docs/DSH-NOTES.md](docs/DSH-NOTES.md) |
 
 ---
@@ -178,6 +180,7 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 | 插件类别 | 放哪 | 部署 |
 | --- | --- | --- |
 | DSH 宿主插件 | `plugins/<name>/`（自包含子目录：入口 + 核心 + 依赖） | `npm run install:plugins` 整目录同步 |
+| Agent preset | `presets/<name>/`（`agent.cordis.yml` + `preset.yml`） | `npm run install:flash-worker` 渲染安装 |
 | 独立进程插件 | `src/`（桥接器等，通过 `/api` 协议通信） | 独立 launchd 服务 |
 
 1. **DSH 宿主插件**（如 MiniMax 搜索、cron-scheduler）→ 一律放 `plugins/<name>/` 子目录，
@@ -185,11 +188,38 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
    用 `npm run install:plugins` 整目录同步到宿主 `plugins/<name>/`，patch 引用
    `./plugins/<name>/<入口文件>`（见 [scripts/install-plugins.mjs](scripts/install-plugins.mjs)）。
 2. **独立进程类**（如钉钉桥接器）→ 放 `src/`，共享 `/api` 协议，与宿主插件无依赖。
-3. 新插件务必写**文档**（带 frontmatter）+ **测试**（放 `test/`）+ 更新 README 插件目录。
+3. **Agent preset**（如 flash-worker）→ 放 `presets/<name>/`，由脚手架渲染安装到
+   `~/.dsh/.agent-presets/<name>/`。
+4. 新插件务必写**文档**（带 frontmatter）+ **测试**（放 `test/`）+ 更新 README 插件目录。
 
 > 规矩的本质：`plugins/` 只装 DSH 宿主插件（被 `cordis.patch.yml` 加载），`src/` 只装独立进程
-> （被 launchd/npm start 拉起），两者绝不混放。cron-scheduler 已从 `src/` 迁到
-> `plugins/cron-scheduler/` 作为规范示例。
+> （被 launchd/npm start 拉起），`presets/` 只装 agent preset（被脚手架装到用户 preset 根），
+> 三者绝不混放。cron-scheduler 已从 `src/` 迁到 `plugins/cron-scheduler/` 作为规范示例。
+
+### 一键安装（插件 + preset）
+
+```bash
+# 只装 DSH 宿主插件（MiniMax 搜索、cron-scheduler）
+npm run install:plugins
+
+# 只装「pro 指挥、flash 执行」agent preset（渲染 flash provider/model 后安装）
+npm run install:flash-worker -- --provider <flash-provider> --model <flash-model>
+
+# 一键装全部（宿主插件 + preset），并把默认 preset 切到 flash-worker
+npm run setup -- --provider <flash-provider> --model <flash-model> --set-default
+
+# 查看当前安装的 provider/model（只读，不重装）
+npm run install:flash-worker -- --show
+```
+
+`install:flash-worker` 的 provider/model 来源：`--provider/--model` 参数 >
+`FLASH_PROVIDER/FLASH_MODEL` 环境变量 > 交互式询问。preset 模板在
+`presets/flash-worker/agent.cordis.yml.tpl`，其中的 `{{FLASH_PROVIDER}}`/`{{FLASH_MODEL}}`
+占位符在安装时注入，避免把个人模型 id 写死进仓库。
+
+**flash-worker preset 是什么**：给主 agent（pro）新增一个 `flash_agent` 工具，主 agent 把
+具体编码任务委派给 flash 模型子 agent 执行、拿回结果后 review，形成「pro 指挥、flash 执行」
+的两级开发协同。子 agent 保留全部工具集。详见 [docs/FLASH-WORKER.md](docs/FLASH-WORKER.md)。
 
 机制与目录规划详见 [docs/PLUGIN-ECOSYSTEM.md](docs/PLUGIN-ECOSYSTEM.md)。
 
@@ -212,10 +242,16 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 │       ├── cron-scheduler.mjs   # 自研 cron 定时调度入口
 │       ├── cron.js              #   cron 解析/下一命中（核心算法）
 │       └── scheduler.js         #   调度状态机/防重复（核心算法）
+├── presets/                 # Agent preset（脚手架渲染安装到 ~/.dsh/.agent-presets/）
+│   └── flash-worker/
+│       ├── agent.cordis.yml.tpl #   含 {{FLASH_PROVIDER}}/{{FLASH_MODEL}} 占位符
+│       └── preset.yml
 ├── tools/
 │   └── restart-dsh-and-verify.mjs # launchd 重启 DSH 并自动验证
 ├── scripts/
-│   └── install-plugins.mjs  # 脚手架：整目录同步 plugins/<name>/ → 宿主 plugins/<name>/
+│   ├── install-plugins.mjs      # 脚手架：整目录同步 plugins/<name>/ → 宿主 plugins/<name>/
+│   ├── install-flash-preset.mjs # 脚手架：渲染并安装 flash-worker preset
+│   └── setup.mjs                # 一键式：装插件 + 装 preset +（可选）切默认
 ├── test/                    # 集成测试（需要 DSH 在线）
 ├── config/config.example.json
 ├── docs/
@@ -237,6 +273,7 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 - [插件生态导览](docs/PLUGIN-ECOSYSTEM.md)（两类插件区别、目录规划、如何扩展）
 - [DSH 知识沉淀](docs/DSH-NOTES.md)（官方动态 + 宿主插件机制实战）
 - [MiniMax 搜索接入指南](docs/MINIMAX-SEARCH.md)（一键接入 DSH 宿主 Web 搜索）
+- [flash-worker 多 Agent 协同](docs/FLASH-WORKER.md)（pro 指挥、flash 执行的 preset 原理/安装/使用）
 
 ## 测试
 
