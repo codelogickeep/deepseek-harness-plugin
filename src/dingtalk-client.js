@@ -17,6 +17,7 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { WebSocket } from 'ws';
 import { DWClient, TOPIC_ROBOT } from 'dingtalk-stream';
 
 /**
@@ -35,7 +36,7 @@ export class DingTalkClient extends EventEmitter {
     //  - healthCheckMs:   健康哨兵周期（0 关闭哨兵）
     //  - forceRebuildMs:  兜底强制重建周期（0 关闭；必须 > 0 才能治半开连接）
     //  - connectTimeoutMs: connect() 超时保护，防止 _connect() 永久 pending
-    this.healthCheckMs = opts.healthCheckMs ?? 30_000;
+    this.healthCheckMs = opts.healthCheckMs ?? 10_000;
     this.forceRebuildMs = opts.forceRebuildMs ?? 15 * 60_000;
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 30_000;
     this.client = null;
@@ -78,8 +79,10 @@ export class DingTalkClient extends EventEmitter {
       // keepAlive 保持 false（SDK 默认）：应用层 ping/pong 心跳在某些网络环境
       // （代理/NAT）会误判超时并 TERMINATE SOCKET，导致反复断连丢消息。
       // 钉钉服务端有系统级 KEEPALIVE，不依赖应用层心跳。
-      // autoReconnect: SDK v2.1.5 默认 true，close/error 时 1s 自动重连；
-      //   但我们有兜底强制重建，即使自动重连失效也能恢复。
+      // autoReconnect 设为 false：重连统一由我们的健康哨兵 + 兜底强制重建负责，
+      // 避免 SDK 的 1s 自动重连与守护重连互相打断（会在 CONNECTING 状态触发
+      // "WebSocket was closed before the connection was established"）。
+      autoReconnect: false,
       keepAlive: false,
     });
     this.client = client;
@@ -100,7 +103,12 @@ export class DingTalkClient extends EventEmitter {
           throw new Error(`connect timeout after ${this.connectTimeoutMs}ms`);
         }),
       ]);
-      // SDK connect() 正常返回 = socket 已 open（见 _connect 实现）
+      // SDK connect() 正常返回 = socket 已 open（见 _connect 实现）。
+      // 但 autoReconnect=false 时，SDK connect() 失败会吞掉错误并正常返回
+      // （connected 仍为 false），这里必须据实校验，避免误报“已连接”。
+      if (client.connected !== true) {
+        throw new Error('connect resolved without connected=true');
+      }
       if (!this._userDisconnected) {
         this._failStreak = 0;
         this.log('Stream connected');
@@ -116,11 +124,37 @@ export class DingTalkClient extends EventEmitter {
     }
   }
 
+  /**
+   * 安全关闭一个 SDK client。
+   *
+   * 背景：ws 在 CONNECTING 状态下调用 close()/terminate() 都会触发 'error'
+   * 事件（"WebSocket was closed before the connection was established"），
+   * SDK 注册的 error 监听器会 console.warn("ERROR", ...)、terminate() 并
+   * reject()，产生噪音且干扰守护流程。
+   *
+   * 因此当 socket 仍处于 CONNECTING 时，先摘除 SDK 的 error 监听器并换上
+   * noop（保留 close 监听器，让 SDK 仍能正确标记 connected=false），再关闭，
+   * 使这个即将废弃的连接安静退出。
+   */
+  _safeDisconnect(client) {
+    if (!client) return;
+    const socket = client.socket;
+    try {
+      if (socket && socket.readyState === WebSocket.CONNECTING) {
+        socket.removeAllListeners('error');
+        socket.on('error', () => {});
+      }
+      client.disconnect();
+    } catch {
+      // 兜底：任何异常都忽略，重建流程继续
+    }
+  }
+
   /** 由守护触发的一次性强制重连。 */
   async _rebuild() {
     if (this._connecting || this._userDisconnected) return;
     if (this.client) {
-      try { this.client.disconnect(); } catch { /* noop */ }
+      this._safeDisconnect(this.client);
       this.client = null;
     }
     this.log(`[guard] 强制重建 Stream 连接（失败连续 ${this._failStreak} 次）…`);
@@ -171,7 +205,7 @@ export class DingTalkClient extends EventEmitter {
     this._userDisconnected = true;
     this._clearGuards();
     if (this.client) {
-      try { this.client.disconnect(); } catch { /* noop */ }
+      this._safeDisconnect(this.client);
       this.client = null;
     }
   }
