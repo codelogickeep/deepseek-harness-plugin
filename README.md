@@ -15,7 +15,10 @@ status: active
 | --- | --- | --- |
 | **钉钉桥接器** (dsh-dingtalk-bridge) | 在钉钉里直接和 DSH Agent 对话，含会话管理控制台、**主动推送**（定时提醒→钉钉） | 独立进程 ↔ DSH `/api` |
 | **MiniMax 网页搜索** (minimax-search) | 把 MiniMax 搜索注册为 DSH 宿主 Web 搜索 provider，`web_search` 工具直接可用 | DSH 宿主插件 (`cordis.patch.yml`) |
-| **官方定时调度** (dsh-schedule) | 启用 DSH 官方持久定时任务（`schedule_create`/`list`/`delete`，after/at/every），到期唤醒 Agent | DSH 宿主插件 (`cordis.patch.yml`) |
+| **自研定时调度** (cron-scheduler) | 标准 **5 字段 cron 表达式**定时任务（`0 10 * * *`），配置文件驱动、跨重启防重复，到点唤醒指定 Agent 会话 | DSH 宿主插件 (`cordis.patch.yml`) |
+
+> 另启用 DSH **官方** `dsh-schedule`（`schedule_create`/`list`/`delete`，after/at/every）
+> 作为补充：临时/会话内定时用官方，固定 cron 节奏用自研 cron-scheduler。区别见 [插件 3](#插件-3自研定时调度-cron-scheduler)。
 
 > 以后开发的新插件都放这里（详情见 [插件生态导览](docs/PLUGIN-ECOSYSTEM.md)）。
 
@@ -27,7 +30,7 @@ status: active
 | --- | --- | --- |
 | 1 | 钉钉桥接器 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) 部署 · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 架构 |
 | 2 | MiniMax 搜索 | [docs/MINIMAX-SEARCH.md](docs/MINIMAX-SEARCH.md) 一键接入 |
-| 3 | 官方定时调度 | [docs/DSH-NOTES.md](docs/DSH-NOTES.md) 宿主机制 · `cordis.patch.yml` 已启用 |
+| 3 | 自研定时调度 | [插件 3](#插件-3自研定时调度-cron-scheduler) · 事故复盘 [docs/CRON-SCHEDULER-INCIDENT.md](docs/CRON-SCHEDULER-INCIDENT.md) |
 | — | 脚手架/方法论 | [docs/PLUGIN-ECOSYSTEM.md](docs/PLUGIN-ECOSYSTEM.md) · [docs/DSH-NOTES.md](docs/DSH-NOTES.md) |
 
 ---
@@ -88,7 +91,7 @@ npm start
 
 ### 主动推送（定时提醒 → 钉钉）
 
-DSH 会话产生**非用户触发的消息**（官方 `dsh-schedule` 定时提醒到期、Agent 主动输出）时，
+DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方 `dsh-schedule` 定时提醒到期、Agent 主动输出）时，
 桥接器会把它推到将该会话设为投递目标的钉钉会话（`📨 Agent 主动消息` 前缀）。
 
 - 前提：该钉钉用户**先给机器人发过消息**（持久化其 `sessionWebhook`）。
@@ -111,11 +114,70 @@ DSH 会话产生**非用户触发的消息**（官方 `dsh-schedule` 定时提�
 
 ---
 
+## 插件 3：自研定时调度（cron-scheduler）
+
+**DSH 宿主插件**，把「标准 5 字段 cron 表达式 + 人类可读配置文件」带到 DSH 本体：
+到点唤醒目标 Agent 会话处理提醒（Agent 的回复经桥接器推送到钉钉）。
+
+### 与官方 dsh-schedule 的区别
+
+| 维度 | 自研 cron-scheduler | 官方 dsh-schedule |
+| --- | --- | --- |
+| 触发方式 | **标准 cron 表达式**（`0 10 * * *`、`*/5 * * * *`） | 工具 `schedule_create/list/delete`（after/at/every，every≥5min） |
+| 配置入口 | 配置文件 `cron-schedules.json`（版本化、可 review） | 会话内工具调用（Agent 创建，写 session 日志） |
+| 粒度 | 分钟级（30s tick） | 分钟级（after/at）或周期（every≥5min） |
+| 目标会话 | 每条可指定 `session`（或回退活动会话） | session-local（原会话且存活） |
+| 适合场景 | 固定节奏巡检/日报（JIRA、例行） | 临时提醒、会话内一次性/周期任务 |
+
+两者共存互补：**固定 cron 节奏用自研，临时/会话内用官方**。官方 `dsh-schedule`
+通过 `cordis.patch.yml` 同目录启用（Agent 有 `schedule_*` 工具）。
+
+### 配置
+
+```json
+// 默认 ~/.dsh/cron-schedules.json（config.schedulesPath 可覆盖）
+{
+  "timezone": "Asia/Shanghai",
+  "schedules": [
+    {
+      "id": "jira-daily",
+      "cron": "0 10 * * *",
+      "timezone": "Asia/Shanghai",
+      "session": "session-xxx",      // 可选：目标 DSH 会话
+      "message": "查看 JIRA 支持网缺陷", // 必填：提醒正文
+      "title": "每日 JIRA 巡检",       // 可选：钉钉标题
+      "enabled": true
+    }
+  ]
+}
+```
+
+### 设计要点（可维护性优先）
+
+- **核心算法单一事实源**：cron 解析/调度逻辑在项目 `src/cron.js` + `src/scheduler.js`，
+  插件经 `config.coreDir` 动态 import，部署与测试同源（避免两处漂移）。
+- **跨重启防重复**：触发后 `lastFiredAt` 回写；主配置若在 DSH 沙箱外不可写时，
+  自动落到 workspace 内 `config/cron-scheduler-state.json`（根治重复触发死循环）。
+- **不再写自定义 session 事件**：审计走 logger，绝不 `session.append` 自定义类型
+  （DSH 白名单外事件会导致历史无法加载——详见 [事故复盘](docs/CRON-SCHEDULER-INCIDENT.md)）。
+- 测试：`test/cron.test.js`、`test/scheduler.test.js`、`test/cron-scheduler.integration.test.js`（43+ 用例）。
+
+### 安装与源码
+
+- **源码**：`src/cron-scheduler.mjs`（项目唯一真相源；核心算法依赖 `src/cron.js` + `src/scheduler.js`）
+- **部署**：复制到 DSH 宿主插件目录 `~/.dsh/profiles/web/plugins/cron-scheduler.mjs`（
+  现有部署即手动 COPY，非 `install:plugins` 管理；改源码后需同步并重启 DSH）
+- **宿主机制**：`cordis.patch.yml` 插入 `cron-scheduler` 行（已启用）
+
+---
+
 ## 脚手架：如何往这个项目里加新插件
 
 1. **独立进程类**（如钉钉桥接器）→ 放 `src/`，共享 `/api` 协议。
 2. **DSH 宿主插件**（如 MiniMax 搜索）→ 放 `plugins/<name>/` 子目录，源码唯一真相；
    用 `npm run install:plugins` 同步到 DSH 宿主（见 [scripts/install-plugins.mjs](scripts/install-plugins.mjs)）。
+   > 例外：自研 cron-scheduler 的源码放在 `src/`（它复用 repo 内 `cron.js`/`scheduler.js` 核心算法，
+   > 部署靠手动 COPY 到宿主 plugins/）。
 3. 新插件务必写**文档**（带 frontmatter）+ **测试** + 更新 README 插件目录。
 
 机制与目录规划详见 [docs/PLUGIN-ECOSYSTEM.md](docs/PLUGIN-ECOSYSTEM.md)。
@@ -129,12 +191,17 @@ DSH 会话产生**非用户触发的消息**（官方 `dsh-schedule` 定时提�
 │   ├── index.js             # 入口/装配/优雅关闭
 │   ├── config.js            # 配置加载（env/.env/config.json + 校验）
 │   ├── dsh-client.js        # DSH 外部客户端（RPC + WS 事件流 + 自动重连）
-│   ├── dingtalk-client.js   # 钉钉 Stream 客户端
+│   ├── dingtalk-client.js   # 钉钉 Stream 客户端（含连接守护）
 │   ├── sessions.js          # 会话映射持久化
-│   └── bridge.js            # 双向转发核心
+│   ├── bridge.js            # 双向转发核心
+│   ├── cron-scheduler.mjs   # ② DSH 宿主插件：自研 cron 定时调度（源码在此，手动 COPY 部署）
+│   ├── cron.js              #   cron 解析/下一命中（核心算法）
+│   └── scheduler.js         #   调度状态机/防重复（核心算法）
 ├── plugins/                 # ② DSH 宿主插件（每个插件一个子目录，源码唯一真相源）
 │   └── minimax-search/
 │       └── minimax-search.mjs
+├── tools/
+│   └── restart-dsh-and-verify.mjs # launchd 重启 DSH 并自动验证
 ├── scripts/
 │   └── install-plugins.mjs  # 脚手架：同步 plugins/ → ~/.dsh/profiles/<profile>/plugins/
 ├── test/                    # 集成测试（需要 DSH 在线）
@@ -145,6 +212,7 @@ DSH 会话产生**非用户触发的消息**（官方 `dsh-schedule` 定时提�
 │   ├── LESSONS.md           # 研发复盘与踩坑记录
 │   ├── PLUGIN-ECOSYSTEM.md  # 插件生态导览（两类插件 + 目录规划）
 │   ├── DSH-NOTES.md         # DSH 知识沉淀（官方动态 + 插件机制）
+│   ├── CRON-SCHEDULER-INCIDENT.md # 定时任务事故复盘 + 插件开发法则
 │   └── MINIMAX-SEARCH.md    # MiniMax 搜索接入指南
 └── .env.example
 ```
