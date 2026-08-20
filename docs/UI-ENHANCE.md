@@ -8,7 +8,7 @@
 | 能力 | 状态 | 说明 |
 |------|------|------|
 | ② 会话状态面板 | ✅ 已验证 | 会话头部显示 🟢运行中/⚪空闲 + 当前工具名 + 排队计数 + 会话短ID |
-| ④ 打开 VS Code | ✅ 已验证 | 会话头部右上角「⧉ 打开 VS Code」按钮，打开当前工作区 |
+| ④ 打开 IDE | ✅ 已验证 | 会话头部右上角「⧉ 打开」按钮，▾ 菜单选 VS Code / Cursor / Windsurf / Insiders |
 | ① 消息渲染增强 | ⏸ 暂缓 | 官方已完善（markdown/代码块复制/思考行/操作条），等具体需求 |
 | ③ 工具调用可视化 | ⏳ 待做 | 计划增强工具调用展示 |
 
@@ -26,7 +26,8 @@
 │  Node 半身 (lib/index.js)                                 │
 │    inject: ['webServer', 'workspaceRegistry']            │
 │    ├─ ctx.webServer.register('/api/ui-enhance/...')       │
-│    │    └─ POST /open-in-editor → spawn('code',[path])    │
+│    │    └─ POST /open-in-editor {editor} → 命令映射       │
+│    │         vscode→code / cursor→cursor / ...（缺命令报错）│
 │    └─ workspaceRegistry.list() → 取工作区路径             │
 │                                                          │
 │  Client 半身 (lib/client.js)                              │
@@ -35,8 +36,8 @@
 │                   header.utilities', ...)                 │
 │    ├─ SessionStatusPanel（② 状态面板）                    │
 │    │    useSession 快照 → running/tool/queue              │
-│    └─ OpenInEditorButton（④ 按钮）                        │
-│         fetch('/api/ui-enhance/open-in-editor')           │
+│    └─ OpenInEditorButton（④ 多IDE按钮）                   │
+│         ▾菜单选 IDE + fetch('/api/ui-enhance/open-in-editor')│
 └──────────────────────────────────────────────────────────┘
 ```
 
