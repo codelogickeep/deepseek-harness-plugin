@@ -600,6 +600,9 @@ function FileTreePanel(): React.ReactElement {
   const [width, setWidth] = React.useState(280)
   const [root, setRoot] = React.useState('')
   const [git, setGit] = React.useState<GitSummary | null>(null)
+  // 当前选中（显示在头部路径区）的相对路径，默认 '/' 表示项目根
+  const [selPath, setSelPath] = React.useState<string>('/')
+  const [copied, setCopied] = React.useState(false)
   const [rootNodes, setRootNodes] = React.useState<TreeNode[] | null>(null)
   const [loadingRoot, setLoadingRoot] = React.useState(false)
   const [err, setErr] = React.useState('')
@@ -701,6 +704,15 @@ function FileTreePanel(): React.ReactElement {
     } catch { /* ignore */ }
   }
 
+  /** 复制路径到剪贴板（显示短暂 ✓ 反馈）。 */
+  const copyPath = async (path: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(path)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    } catch { /* clipboard 不可用时忽略 */ }
+  }
+
   /** 递归渲染目录（浅色，对齐左侧栏）。 */
   const renderLevel = (nodes: TreeNode[], depth: number): React.ReactElement[] => {
     return nodes.map((node) => {
@@ -708,12 +720,16 @@ function FileTreePanel(): React.ReactElement {
       const badge = gitBadge(entry.git)
       const indent = { paddingLeft: 10 + depth * 16 }
       const isDir = entry.type === 'dir'
+      const isSel = selPath === `/${entry.path}`
       return (
         <React.Fragment key={entry.path}>
           <div
             role="button"
             tabIndex={0}
-            onClick={() => { if (isDir) void toggleDir(node) }}
+            onClick={() => {
+              setSelPath(`/${entry.path}`)
+              if (isDir) void toggleDir(node)
+            }}
             onDoubleClick={() => { if (!isDir) void openFile(entry.path) }}
             title={isDir ? entry.path : `双击在编辑器中打开 ${entry.path}`}
             style={{
@@ -725,9 +741,10 @@ function FileTreePanel(): React.ReactElement {
               fontSize: 13,
               color: '#0f1115',
               whiteSpace: 'nowrap',
+              background: isSel ? 'rgba(37, 99, 235, 0.08)' : 'transparent',
             }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(0,0,0,0.05)' }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'transparent' }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = isSel ? 'rgba(37, 99, 235, 0.12)' : 'rgba(0,0,0,0.05)' }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = isSel ? 'rgba(37, 99, 235, 0.08)' : 'transparent' }}
           >
             <span style={{ fontSize: 10, width: 12, color: '#9aa1ab', flexShrink: 0 }}>
               {isDir ? (node.expanded ? '▾' : '▸') : ''}
@@ -824,13 +841,29 @@ function FileTreePanel(): React.ReactElement {
             borderBottom: '1px solid rgb(229, 231, 235)',
             height: 74, boxSizing: 'border-box',
           }}>
-            {/* 第一行：项目名（占满全宽，无分支干扰） */}
+            {/* 第一行：当前路径（相对项目根，默认 '/'）+ 复制按钮 */}
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, height: 37, flexShrink: 0,
+              display: 'flex', alignItems: 'center', gap: 6, height: 37, flexShrink: 0,
             }}>
-              <span style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                {root ? root.split('/').pop() || root : '工作区'}
+              <span
+                title={selPath === '/' ? '项目根目录' : '回到项目根目录'}
+                onClick={() => { setSelPath('/') }}
+                style={{
+                  fontWeight: 400, fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+                  color: '#0f1115', cursor: 'pointer',
+                }}
+              >
+                {selPath}
               </span>
+              <button
+                type="button"
+                onClick={() => void copyPath(selPath)}
+                style={iconBtn}
+                title="复制路径"
+              >
+                {copied ? '✓' : '⧉'}
+              </button>
             </div>
             {/* 第二行：操作按钮（y 37-74），与中间 tabs 行同高 */}
             <div style={{
@@ -864,10 +897,10 @@ function FileTreePanel(): React.ReactElement {
                     padding: '1px 7px', borderRadius: 999, border: '1px solid rgb(252, 211, 77)', whiteSpace: 'nowrap',
                   }}>⎇ {git.branch || '—'}</span>
                   {git.ahead !== null && git.ahead > 0 ? (
-                    <span style={{ color: '#2563eb', fontWeight: 600 }}>↑{git.ahead}</span>
+                    <span style={{ color: '#2563eb', fontWeight: 600 }}>↑{git.ahead} 未推送</span>
                   ) : null}
                   <span style={{ flex: 1 }} />
-                  <span style={{ color: '#9aa1ab' }}>拖拽⇔ 双击📄开</span>
+                  <span style={{ color: '#6b7280', fontWeight: 600 }}>{git.modified + git.added + git.deleted + git.untracked} 处变更</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
                   {git.modified > 0 ? <span style={gitChip('#f59e0b', 'rgba(245,158,11,0.14)')}>M {git.modified}</span> : null}
@@ -877,7 +910,6 @@ function FileTreePanel(): React.ReactElement {
                   {git.modified === 0 && git.added === 0 && git.deleted === 0 && git.untracked === 0 ? (
                     <span style={{ color: '#22c55e', fontWeight: 600 }}>✓ 工作区干净</span>
                   ) : null}
-                  <span style={{ flex: 1 }} />
                 </div>
                 {git.lastCommit ? (
                   <div style={{ color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
