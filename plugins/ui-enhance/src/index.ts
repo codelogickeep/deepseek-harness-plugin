@@ -61,20 +61,29 @@ function json(res: Res, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
-/** 打开 VS Code 打开给定工作区目录。 */
-function openInEditor(workspacePath: string): Promise<{ ok: boolean, message: string }> {
+/** IDE 命令映射（与 client 的 IDE_OPTIONS 保持一致）。 */
+const EDITOR_COMMANDS: Record<string, string> = {
+  vscode: 'code',
+  cursor: 'cursor',
+  windsurf: 'windsurf',
+  insiders: 'code-insiders',
+}
+
+/** 打开给定编辑器打开工作区目录。editor 为空/未知时回退 vscode。 */
+function openInEditor(workspacePath: string, editor = 'vscode'): Promise<{ ok: boolean, message: string }> {
   if (!workspacePath || typeof workspacePath !== 'string') {
     return Promise.resolve({ ok: false, message: 'missing workspace path' })
   }
+  const cmd = EDITOR_COMMANDS[editor] ?? 'code'
   return new Promise((resolve) => {
-    const child = spawn('code', [workspacePath], {
+    const child = spawn(cmd, [workspacePath], {
       stdio: 'ignore',
       detached: true,
     })
-    child.on('error', (err) => resolve({ ok: false, message: `code launch failed: ${err.message}` }))
+    child.on('error', (err) => resolve({ ok: false, message: `${cmd} launch failed: ${err.message}` }))
     child.on('spawn', () => {
       child.unref()
-      resolve({ ok: true, message: `opened ${workspacePath}` })
+      resolve({ ok: true, message: `${cmd} opened ${workspacePath}` })
     })
   })
 }
@@ -107,7 +116,8 @@ async function handle(ctx: Context, req: Req, res: Res): Promise<void> {
         return
       }
     }
-    const result = await openInEditor(workspace)
+    const editor = String(body.editor ?? 'vscode')
+    const result = await openInEditor(workspace, editor)
     json(res, result.ok ? 200 : 400, result)
     return
   }
