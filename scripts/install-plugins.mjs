@@ -22,7 +22,7 @@
  *   DSH_PROFILE=tui node scripts/install-plugins.mjs   # 装到指定 profile
  */
 
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
@@ -40,6 +40,22 @@ const PROFILE = process.env.DSH_PROFILE || 'web';
  */
 const PLUGIN_PROFILE_DEPS = {
   'browser-reader': ['playwright-core'],
+};
+
+/**
+ * client 包类插件：npm 包形态（声明 dsh.client + exports["./client"]），
+ * 由 client-modules 扫描并渲染到前端。与「宿主 .mjs 插件」不同：
+ *   - 不复制到 profile 的 plugins/ 目录，而是 `pnpm add file:` 装进 profile 的
+ *     node_modules（client-modules 用 createRequire(ctx.baseUrl) 解析包名）
+ *   - 需要先构建（tsdown 产出 lib/client.js + lib/index.js）
+ * 键 = 插件名。值 = 构建命令（在插件目录执行）与入口包名。
+ */
+const CLIENT_PACKAGE_PLUGINS = {
+  'ui-enhance': {
+    packageName: '@dsh-local/ui-enhance',
+    buildCmd: 'node_modules/.bin/tsdown',
+    postBuild: 'node -e "require(\'fs\').copyFileSync(\'lib/client.cjs\',\'lib/client.js\')"',
+  },
 };
 
 /** 递归复制 srcDir 到 destDir。 */
@@ -113,6 +129,13 @@ function main() {
   let installed = 0;
   const failed = [];
   for (const name of pluginNames) {
+    // client 包类插件走独立的「构建 + pnpm 安装」链路
+    if (CLIENT_PACKAGE_PLUGINS[name]) {
+      const ok = installClientPackage(name, CLIENT_PACKAGE_PLUGINS[name], profileDir);
+      if (ok) installed += 1; else failed.push(name);
+      continue;
+    }
+
     const srcDir = join(PLUGINS_SRC, name);
     const destDir = join(destRoot, name);
 
@@ -148,6 +171,109 @@ function main() {
   console.log(`目标宿主：${destRoot}`);
   console.log('提示：修改后若 HMR 未生效，请重启 DSH（或确认 cordis.patch.yml 已引用插件）。');
   if (failed.length > 0) process.exit(1);
+}
+
+/**
+ * client 包类插件的安装链路：构建（tsdown → lib/）→ pnpm file: 安装到 profile →
+ * createRequire 解析验证 + client bundle 存在性/形态验证。
+ * 任何一步失败都不写 patch 引用（由上游调用方决定），并返回 false。
+ */
+function installClientPackage(name, spec, profileDir) {
+  const pluginDir = join(PLUGINS_SRC, name);
+  console.log(`\n📦 [client 包] ${name} → ${spec.packageName}`);
+
+  // 1) 构建（在插件目录跑 buildCmd；产物 lib/client.cjs + lib/index.js）
+  if (spec.buildCmd) {
+    const build = spawnSync(spec.buildCmd, [], {
+      cwd: pluginDir, stdio: 'inherit', shell: process.platform === 'win32',
+    });
+    if (build.status !== 0) {
+      console.error(`❌ [client 包] ${name} 构建失败（buildCmd 退出码 ${build.status}）。`);
+      return false;
+    }
+    if (spec.postBuild) {
+      // postBuild 是 shell 命令字符串（如 node -e "..." 复制产物），必须经 shell 执行
+      const post = spawnSync(spec.postBuild, [], {
+        cwd: pluginDir, stdio: 'inherit', shell: true,
+      });
+      if (post.status !== 0) {
+        console.error(`❌ [client 包] ${name} postBuild 失败（${spec.postBuild}）。`);
+        return false;
+      }
+    }
+    console.log(`✅ [client 包] ${name} 构建完成（lib/）`);
+  } else if (!existsSync(join(pluginDir, 'lib', 'client.js'))) {
+    console.error(`❌ [client 包] ${name} 无构建产物 lib/client.js 且无 buildCmd。`);
+    return false;
+  }
+
+  // 1.5) Node 半身「加载期自检」（与宿主 .mjs 插件同款防线）：
+  //      对 lib/index.js 跑 check-plugin，拦截「未声明 inject 就访问 ctx.xxx」
+  //      「schema 非法」等「启动即崩」问题——这类问题真实 DSH 会在 boot 时崩。
+  const nodeEntry = join(pluginDir, 'lib', 'index.js');
+  if (existsSync(nodeEntry)) {
+    const check = spawnSync(
+      process.execPath,
+      [join(REPO_ROOT, 'scripts', 'check-plugin.mjs'), nodeEntry],
+      { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] },
+    );
+    if (check.stdout) process.stdout.write(check.stdout);
+    if (check.stderr) process.stderr.write(check.stderr);
+    if (check.status !== 0) {
+      console.error(`❌ [client 包] ${name} Node 半身自检失败，已跳过安装（不会写 patch，DSH 不会因此起不来）。`);
+      return false;
+    }
+    console.log(`✅ [client 包] ${name} Node 半身自检通过`);
+  }
+
+  // 2) 强制重装到 profile（先 remove 再 add，避免 pnpm 版本未变的「Already up to date」）
+  const pkgSpec = 'file:' + pluginDir;
+  const remove = spawnSync('pnpm', ['remove', spec.packageName], {
+    cwd: profileDir, stdio: 'pipe', shell: process.platform === 'win32',
+  });
+  const add = spawnSync('pnpm', ['add', pkgSpec], {
+    cwd: profileDir, stdio: 'pipe', shell: process.platform === 'win32',
+  });
+  if (add.status !== 0) {
+    console.error(`❌ [client 包] ${name} pnpm add 失败（退出码 ${add.status}）。`);
+    return false;
+  }
+
+  // 3) 验证：createRequire 可解析 + dsh.client 声明 + client bundle 存在 + closure-factory 形态
+  const baseUrl = profileDir + '/';
+  const projRequire = createRequire(baseUrl);
+  let pkgPath;
+  try {
+    pkgPath = projRequire.resolve(`${spec.packageName}/package.json`);
+  } catch (e) {
+    console.error(`❌ [client 包] ${name} 无法解析 ${spec.packageName}/package.json：${e.message}`);
+    return false;
+  }
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  if (pkg.dsh?.client?.platform !== 'web') {
+    console.error(`❌ [client 包] ${name} 未声明 dsh.client.platform = "web"。`);
+    return false;
+  }
+  const clientDefault = typeof pkg.exports?.['./client'] === 'string'
+    ? pkg.exports['./client']
+    : pkg.exports?.['./client']?.default;
+  if (!clientDefault) {
+    console.error(`❌ [client 包] ${name} 未导出 exports["./client"]。`);
+    return false;
+  }
+  const clientPath = join(join(pkgPath, '..'), clientDefault);
+  if (!existsSync(clientPath)) {
+    console.error(`❌ [client 包] ${name} client bundle 缺失：${clientPath}`);
+    return false;
+  }
+  const head = readFileSync(clientPath, 'utf8').slice(0, 80);
+  if (!head.includes('__ModuleLoader__.load')) {
+    console.error(`❌ [client 包] ${name} client bundle 不是 closure-factory 形态（缺 __ModuleLoader__.load）。`);
+    return false;
+  }
+  console.log(`✅ [client 包] ${name} 安装并验证通过 → ${pkgPath}`);
+  console.log(`   client bundle: ${clientPath}（closure-factory ✓）`);
+  return true;
 }
 
 /**
