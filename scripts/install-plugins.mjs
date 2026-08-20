@@ -22,7 +22,7 @@
  *   DSH_PROFILE=tui node scripts/install-plugins.mjs   # 装到指定 profile
  */
 
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
@@ -166,6 +166,9 @@ function main() {
     console.error('   这些插件的模块未就位，请勿在 cordis.patch.yml 里引用它们，否则 DSH 会启动失败。');
     console.error('   修复后重跑本脚本即可。');
   }
+
+  // 保证 profile 的 cordis.patch.yml 引用本仓库插件（幂等；缺失才补，不动已有内容）
+  ensurePluginPatchRefs(profileDir, join(REPO_ROOT, 'presets', 'web-cordis.patch.yml.tpl'));
 
   console.log(`\n已完成：共安装 ${installed} 个文件。`);
   console.log(`目标宿主：${destRoot}`);
@@ -312,6 +315,103 @@ function runPluginCheck(pluginDir) {
     if (result.status !== 0) allPass = false;
   }
   return allPass;
+}
+
+/**
+ * 幂等地把「仓库插件」的 cordis.patch.yml 引用补进 profile（不破坏用户已有内容）。
+ *
+ * 背景：cordis.patch.yml 的 `insert` 数组里引用各插件，但它是 profile 内手工维护的
+ * 文件（DSH 首次运行自动生成骨架）。其他电脑 clone 后必须把插件引用加进去才能生效。
+ * 本函数让 `install-plugins` 一条命令完成「装插件 + 保证 patch 引用」。
+ *
+ * 策略（保守、幂等）：
+ *   1) 目标 patch 不存在 → 打印指引，不擅自创建（DSH 首启会自动生成，避免覆盖官方骨架）。
+ *   2) 存在 → 检查每个模板插件 id 是否已在文件中（顶层或 insert 内）：
+ *      已存在 → 跳过；缺失 → 把模板的 `insert` 条目（4 空格缩进，与目标文件一致）
+ *      插入到目标 `- insert:` 数组最后一个成员之后（没有 insert 则文件尾追加新 insert 块）。
+ *   不删除、不覆盖任何既有行。重复运行幂等。
+ *
+ * @param {string} profileDir   profile 目录（patch 在 <profile>/cordis.patch.yml）
+ * @param {string} tplPath      模板文件路径（presets/web-cordis.patch.yml.tpl）
+ * @returns {boolean} 是否处理成功（patch 缺失不算失败）
+ */
+function ensurePluginPatchRefs(profileDir, tplPath) {
+  const patchPath = join(profileDir, 'cordis.patch.yml');
+  if (!existsSync(tplPath)) {
+    console.log(`ℹ️  无 patch 模板（${tplPath}），跳过 patch 引用确保。`);
+    return true;
+  }
+  if (!existsSync(patchPath)) {
+    console.log(`⚠️  未找到 ${patchPath}（DSH 首次启动会自动生成）。`);
+    console.log(`   首次启动后重新运行本脚本，会自动补上插件引用。`);
+    return true;
+  }
+
+  const tpl = readFileSync(tplPath, 'utf8');
+  const target = readFileSync(patchPath, 'utf8');
+
+  // 模板里定义的插件 id（`insert:` 下的成员 `    - id:`，4 空格缩进）
+  const tplIds = [...tpl.matchAll(/^ {4}- id: ([^\s]+)\s*$/gm)].map((m) => m[1]);
+  if (tplIds.length === 0) {
+    console.log(`⚠️  patch 模板未解析到任何插件 id（检查 ${tplPath} 缩进）。`);
+    return false;
+  }
+
+  // 目标文件里已有的 id（顶层 `- id:` 与 insert 成员 `    - id:` 都算）
+  const existing = new Set([...target.matchAll(/^ {0,4}- id: ([^\s]+)\s*$/gm)].map((m) => m[1]));
+
+  const missing = tplIds.filter((id) => !existing.has(id));
+  if (missing.length === 0) {
+    console.log(`✅ patch 引用齐全：${tplIds.join(', ')} 均已在 ${patchPath}`);
+    return true;
+  }
+  console.log(`📝 补充 patch 插件引用（缺失：${missing.join(', ')}）→ ${patchPath}`);
+
+  // 组装缺失插件块的插入文本：从模板抽出每条（含 4 空格缩进），条目间空一行
+  let block = '';
+  for (const id of tplIds) {
+    if (!missing.includes(id)) continue;
+    const start = tpl.indexOf(`    - id: ${id}`);
+    const next = tpl.indexOf('    - id:', start + 8);
+    const chunk = tpl.slice(start, next === -1 ? undefined : next).replace(/\n+$/, '');
+    block += (block ? '\n' : '') + chunk;
+  }
+
+  // 定位 `- insert:` 块的插入点：最后一个成员的**末尾**（含其字段行）之后。
+  // 1) 找 insert 块内最后一个成员首行（`    - id:`，4 空格缩进）；
+  // 2) 从该成员首行继续向后，跳过它的多行字段（缩进 >= 4 的行），直到块结束。
+  const lines = target.split('\n');
+  const insertIdx = lines.findIndex((l) => /^- insert:\s*$/.test(l));
+  let insertAt = -1; // 插入位置（行号；在该行之后 splice）
+  if (insertIdx !== -1) {
+    let lastMemberStart = -1;
+    for (let i = insertIdx + 1; i < lines.length && /^ {4,}/.test(lines[i]); i++) {
+      if (/^ {4}- id:/.test(lines[i])) lastMemberStart = i;
+    }
+    if (lastMemberStart !== -1) {
+      // 成员首行之后的所有 4+ 空格缩进行都属于它 → 找末尾
+      let i = lastMemberStart + 1;
+      while (i < lines.length) {
+        const line = lines[i];
+        if (/^ {4,}/.test(line)) { i++; continue; }
+        break;
+      }
+      insertAt = i - 1;
+    }
+  }
+
+  if (insertAt === -1) {
+    // 没有 insert 或没有成员：文件尾追加一个新成员 `- insert:`（顶层序列元素，
+    // 与 cordis.patch.yml 结构一致——patch 是顶层 YAML 序列）。成员已 4 空格缩进。
+    const extension = `- insert:\n${block}\n`;
+    writeFileSync(patchPath, target.endsWith('\n') ? target + '\n' + extension : target + '\n\n' + extension);
+  } else {
+    // 插在最后一个成员（含字段）之后
+    lines.splice(insertAt + 1, 0, block);
+    writeFileSync(patchPath, lines.join('\n') + '\n');
+  }
+  console.log(`✅ 已补充：${missing.join(', ')}（幂等，重复运行不会再加）`);
+  return true;
 }
 
 main();

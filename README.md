@@ -281,6 +281,35 @@ npm run setup -- --provider <flash-provider> --model <flash-model> --set-default
 npm run install:flash-worker -- --show
 ```
 
+### 新电脑部署（可移植性）
+
+clone 仓库后，DSH Web 启动过一次（生成 `cordis.patch.yml` 骨架）即可一键装齐：
+
+```bash
+# ① 根依赖（钉钉桥接 ws 等）
+npm install
+
+# ② ui-enhance 构建依赖（tsdown/typescript/react，git 按惯例忽略 node_modules）
+cd plugins/ui-enhance && pnpm install && cd ../..
+
+# ③ 装全部插件 = 构建 + 自检 + 装进 profile + 自动补 cordis.patch.yml 插件引用
+npm run install:plugins
+```
+
+`install:plugins` 现在会**自动把插件引用追加进 `~/.dsh/profiles/web/cordis.patch.yml`**
+（幂等：按 id 检测，缺失才补，不覆盖用户已有条目）——不用手工编辑 patch。
+插件引用模板在 [presets/web-cordis.patch.yml.tpl](presets/web-cordis.patch.yml.tpl)。
+
+**装完需要重启 DSH 吗？**
+
+| 改动类型 | 是否重启 |
+| --- | --- |
+| 首次装插件 / 改 Node 半身（`src/index.ts`） | ✅ 必须重启（路由在进程内注册） |
+| 只改 client bundle 后重跑 `install:plugins` | ❌ 不用，前端刷新即可 |
+| 装 browser-reader 等宿主 `.mjs` 插件 | ✅ 必须重启 |
+
+配好 patch 后：`dsh web`（或你常用的启动方式）重启一次即可全部生效。
+
 `install:flash-worker` 的 provider/model 来源：`--provider/--model` 参数 >
 `FLASH_PROVIDER/FLASH_MODEL` 环境变量 > 交互式询问。preset 模板在
 `presets/flash-worker/agent.cordis.yml.tpl`，其中的 `{{FLASH_PROVIDER}}`/`{{FLASH_MODEL}}`
@@ -316,13 +345,14 @@ npm run install:flash-worker -- --show
 │       ├── src/client/          #   client 半身：状态面板 + 工具统计 + 文件树 + 打开IDE按钮
 │       └── tsdown.config.ts     #   closure-factory bundle 构建
 ├── presets/                 # Agent preset（脚手架渲染安装到 ~/.dsh/.agent-presets/）
+│   ├── web-cordis.patch.yml.tpl #   插件 patch 引用模板（install-plugins 自动合并，幂等）
 │   └── flash-worker/
 │       ├── agent.cordis.yml.tpl #   含 {{FLASH_PROVIDER}}/{{FLASH_MODEL}} 占位符
 │       └── preset.yml
 ├── tools/
 │   └── restart-dsh-and-verify.mjs # launchd 重启 DSH 并自动验证
 ├── scripts/
-│   ├── install-plugins.mjs      # 脚手架：整目录同步 plugins/<name>/ → 宿主 plugins/<name>/（含加载期自检门）
+│   ├── install-plugins.mjs      # 脚手架：整目录同步 plugins/<name>/ → 宿主 plugins/<name>/（含加载期自检门 + 自动补 patch 引用）
 │   ├── check-plugin.mjs         # 脚手架：插件加载期自检（真实 DSH schema 校验器，重启前必跑）
 │   ├── install-flash-preset.mjs # 脚手架：渲染并安装 flash-worker preset
 │   └── setup.mjs                # 一键式：装插件 + 装 preset +（可选）切默认
