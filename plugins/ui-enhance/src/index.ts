@@ -136,6 +136,41 @@ function loadGitStatus(cwd: string): Map<string, string> {
   return map
 }
 
+/** git 汇总统计（供侧栏底部显示）：分支 + 计数 + 最近提交。 */
+function loadGitSummary(cwd: string): { branch: string | null, modified: number, added: number, deleted: number, untracked: number, lastCommit: string | null, ahead: number | null } {
+  const empty = { branch: null, modified: 0, added: 0, deleted: 0, untracked: 0, lastCommit: null, ahead: null }
+  if (!cwd) return empty
+  // 分支
+  const b = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore','pipe','ignore'], timeout: 5000 })
+  const branch = b.status === 0 ? (b.stdout.trim() || null) : null
+  // ahead/behind（相对 upstream）
+  let ahead: number | null = null
+  const u = spawnSync('git', ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], { cwd, encoding: 'utf8', stdio: ['ignore','pipe','ignore'], timeout: 5000 })
+  if (u.status === 0) {
+    const m = u.stdout.trim().split(/\s+/)
+    if (m.length === 2 && !isNaN(+m[0])) ahead = +m[0]
+  }
+  // status 计数
+  const s = spawnSync('git', ['status', '--porcelain=v1', '--no-renames'], { cwd, encoding: 'utf8', stdio: ['ignore','pipe','ignore'], timeout: 8000 })
+  let modified = 0, added = 0, deleted = 0, untracked = 0
+  if (s.status === 0) {
+    for (const line of s.stdout.split('\n')) {
+      if (!line || line.length < 4) continue
+      const code = line.slice(0, 2)
+      const first = code[0], second = code[1]
+      if (code === '??') untracked++
+      else if (first === 'A' || second === 'A') added++
+      else if (first === 'D' || second === 'D') deleted++
+      else modified++
+    }
+  }
+  // 最近提交
+  let lastCommit: string | null = null
+  const c = spawnSync('git', ['log', '-1', '--format=%h %s'], { cwd, encoding: 'utf8', stdio: ['ignore','pipe','ignore'], timeout: 5000 })
+  if (c.status === 0) lastCommit = c.stdout.trim() || null
+  return { branch, modified, added, deleted, untracked, lastCommit, ahead }
+}
+
 /**
  * 列出工作区根下 dir（相对路径）的单层目录内容。
  * 返回 { name, path, type, git, size }[]（目录在前，字母序）。
@@ -198,15 +233,9 @@ async function handle(ctx: Context, req: Req, res: Res): Promise<void> {
       }
       const dir = params.get('dir') ?? ''
       const entries = await readTree(root, dir)
-      // 顶层额外返回根信息 + git 分支
-      let branch: string | null = null
-      if (!dir) {
-        const b = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-          cwd: root, encoding: 'utf8', stdio: ['ignore','pipe','ignore'], timeout: 5000,
-        })
-        if (b.status === 0) branch = b.stdout.trim() || null
-      }
-      json(res, 200, { root, dir, entries, branch })
+      // 顶层额外返回 git 汇总（分支 + 计数 + 最近提交），供侧栏底部显示
+      const git = loadGitSummary(root)
+      json(res, 200, { root, dir, entries, git })
     } catch (err) {
       json(res, 500, { error: `tree failed: ${String(err instanceof Error ? err.message : err)}` })
     }

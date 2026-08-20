@@ -558,6 +558,17 @@ interface TreeEntry {
   size: number | null
 }
 
+/** git 汇总（底部栏显示）：分支 + 计数 + 最近提交。 */
+interface GitSummary {
+  branch: string | null
+  modified: number
+  added: number
+  deleted: number
+  untracked: number
+  lastCommit: string | null
+  ahead: number | null
+}
+
 /** git 状态 → 徽标文案/颜色。 */
 function gitBadge(code: string | null): { label: string, color: string, bg: string } | null {
   if (!code) return null
@@ -588,7 +599,7 @@ function FileTreePanel(): React.ReactElement {
   const [open, setOpen] = React.useState(false)
   const [width, setWidth] = React.useState(280)
   const [root, setRoot] = React.useState('')
-  const [branch, setBranch] = React.useState<string | null>(null)
+  const [git, setGit] = React.useState<GitSummary | null>(null)
   const [rootNodes, setRootNodes] = React.useState<TreeNode[] | null>(null)
   const [loadingRoot, setLoadingRoot] = React.useState(false)
   const [err, setErr] = React.useState('')
@@ -601,9 +612,9 @@ function FileTreePanel(): React.ReactElement {
     setErr('')
     try {
       const r = await fetch('/api/ui-enhance/tree?dir=')
-      const d: { root: string, branch: string | null, entries: TreeEntry[] } = await r.json()
+      const d: { root: string, git: GitSummary | null, entries: TreeEntry[] } = await r.json()
       setRoot(d.root)
-      setBranch(d.branch)
+      setGit(d.git ?? null)
       setRootNodes((d.entries ?? []).map((e) => ({ entry: e, loaded: false, children: [], expanded: false, loading: false })))
     } catch (e) {
       setErr(`加载失败: ${String(e)}`)
@@ -813,19 +824,13 @@ function FileTreePanel(): React.ReactElement {
             borderBottom: '1px solid rgb(229, 231, 235)',
             height: 74, boxSizing: 'border-box',
           }}>
-            {/* 第一行：项目名 + 分支（y 0-37） */}
+            {/* 第一行：项目名（占满全宽，无分支干扰） */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8, height: 37, flexShrink: 0,
             }}>
-              <span style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                 {root ? root.split('/').pop() || root : '工作区'}
               </span>
-              {branch ? (
-                <span style={{
-                  fontSize: 11, fontWeight: 700, color: '#b45309', background: 'rgb(254, 243, 199)',
-                  padding: '1px 7px', borderRadius: 999, border: '1px solid rgb(252, 211, 77)',
-                }}>⎇ {branch}</span>
-              ) : null}
             </div>
             {/* 第二行：操作按钮（y 37-74），与中间 tabs 行同高 */}
             <div style={{
@@ -845,12 +850,44 @@ function FileTreePanel(): React.ReactElement {
             ) : null}
             {!loadingRoot && !err ? renderLevel(nodes, 0) : null}
           </div>
-          {/* 底栏提示 */}
+          {/* 底部：git 汇总信息（分支 + 变更计数 + 最近提交） */}
           <div style={{
-            borderTop: '1px solid rgb(229, 231, 235)', padding: '6px 14px',
-            fontSize: 11, color: '#9aa1ab',
+            borderTop: '1px solid rgb(229, 231, 235)', padding: '8px 14px 9px',
+            fontSize: 11, color: '#4b5563',
+            display: 'flex', flexDirection: 'column', gap: 3,
           }}>
-            拖拽左边框调宽度 · 双击文件打开
+            {git ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, color: '#b45309', background: 'rgb(254, 243, 199)',
+                    padding: '1px 7px', borderRadius: 999, border: '1px solid rgb(252, 211, 77)', whiteSpace: 'nowrap',
+                  }}>⎇ {git.branch || '—'}</span>
+                  {git.ahead !== null && git.ahead > 0 ? (
+                    <span style={{ color: '#2563eb', fontWeight: 600 }}>↑{git.ahead}</span>
+                  ) : null}
+                  <span style={{ flex: 1 }} />
+                  <span style={{ color: '#9aa1ab' }}>拖拽⇔ 双击📄开</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                  {git.modified > 0 ? <span style={gitChip('#f59e0b', 'rgba(245,158,11,0.14)')}>M {git.modified}</span> : null}
+                  {git.added > 0 ? <span style={gitChip('#22c55e', 'rgba(34,197,94,0.14)')}>A {git.added}</span> : null}
+                  {git.deleted > 0 ? <span style={gitChip('#ef4444', 'rgba(239,68,68,0.14)')}>D {git.deleted}</span> : null}
+                  {git.untracked > 0 ? <span style={gitChip('#64748b', 'rgba(100,116,139,0.14)')}>? {git.untracked}</span> : null}
+                  {git.modified === 0 && git.added === 0 && git.deleted === 0 && git.untracked === 0 ? (
+                    <span style={{ color: '#22c55e', fontWeight: 600 }}>✓ 工作区干净</span>
+                  ) : null}
+                  <span style={{ flex: 1 }} />
+                </div>
+                {git.lastCommit ? (
+                  <div style={{ color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    ◷ {git.lastCommit}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div style={{ color: '#9aa1ab' }}>无 git 信息</div>
+            )}
           </div>
         </div>
       ) : null}
@@ -861,6 +898,14 @@ function FileTreePanel(): React.ReactElement {
 const iconBtn: React.CSSProperties = {
   border: 'none', background: 'transparent', color: '#6b7280',
   cursor: 'pointer', fontSize: 14, padding: '2px 5px', borderRadius: 5,
+}
+
+/** git 计数小徽标（底部栏）。 */
+function gitChip(color: string, bg: string): React.CSSProperties {
+  return {
+    fontSize: 10, fontWeight: 800, color, background: bg,
+    padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap',
+  }
 }
 
 
