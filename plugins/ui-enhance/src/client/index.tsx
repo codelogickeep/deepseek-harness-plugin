@@ -591,13 +591,13 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('conversation.session.header.utilities', () =>
     ctx.slots.register({
       name: 'conversation.session.header.utilities',
-      id: 'ui-enhance-open-editor',
+      id: 'ui-enhance-tool-stats',
       order: 6,
-    }, OpenInEditorButton))
+    }, ToolCallStats))
   ctx.slots.inject('conversation.session.header.utilities', () =>
     ctx.slots.register({
       name: 'conversation.session.header.utilities',
-      id: 'ui-enhance-tool-stats',
-      order: 7,
-    }, ToolCallStats))
+      id: 'ui-enhance-open-editor',
+      order: 100,
+    }, OpenInEditorButton))
 }
