@@ -9,7 +9,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { promises as fsp } from 'node:fs'
+import { promises as fsp, watch } from 'node:fs'
 import { resolve, sep, join, relative } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
@@ -201,6 +201,64 @@ async function readTree(root: string, relDir: string): Promise<{ name: string, p
   return out
 }
 
+/* ── 实时文件变更推送（SSE + fs.watch）────────────────────────────── */
+
+/** 已连接的 SSE 客户端（响应对象集合）。 */
+const sseClients = new Set<ServerResponse>()
+
+/** 文件变更 debounce 定时器。 */
+let sseTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 向所有 SSE 客户端广播一次变更事件（防抖 150ms）。 */
+function broadcastChanged(): void {
+  if (sseTimer !== null) return
+  sseTimer = setTimeout(() => {
+    sseTimer = null
+    for (const res of sseClients) {
+      try { res.write('event: changed\ndata: {}\n\n') } catch { /* client gone */ }
+    }
+  }, 150)
+}
+
+/** 路径是否需要跳过（.git/node_modules 内部噪音不广播，避免高频刷屏）。 */
+function isNoisePath(p: string): boolean {
+  const parts = p.split(sep)
+  return parts.some((part) => part === '.git' || part === 'node_modules')
+}
+
+/** 启动对工作区根的文件系统监听（macOS/FSEvents 支持 recursive）。返回清理函数。 */
+function startWorkspaceWatcher(root: string): () => void {
+  let watcher: ReturnType<typeof watch> | null = null
+  try {
+    watcher = watch(root, { recursive: true }, (_eventType, filename) => {
+      if (!filename) return
+      const p = String(filename)
+      if (isNoisePath(p)) return
+      broadcastChanged()
+    })
+  } catch (err) {
+    // recursive 在某些平台不可用：降级为非递归（至少捕获根级变化）
+    try {
+      watcher = watch(root, (_eventType, filename) => {
+        if (!filename) return
+        if (isNoisePath(String(filename))) return
+        broadcastChanged()
+      })
+      console.warn('[ui-enhance] fs.watch recursive 不可用，降级为非递归监听')
+    } catch (err2) {
+      console.warn('[ui-enhance] fs.watch 启动失败:', String(err2))
+    }
+  }
+  return () => {
+    for (const res of sseClients) {
+      try { res.end() } catch { /* noop */ }
+    }
+    sseClients.clear()
+    if (sseTimer !== null) { clearTimeout(sseTimer); sseTimer = null }
+    watcher?.close()
+  }
+}
+
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
@@ -209,6 +267,20 @@ export function apply(ctx: Context): void {
       void handle(ctx, req, res)
     },
   }), 'ui-enhance: routes')
+
+  // 文件系统监听：工作区变化（git 提交/文件增删）→ SSE 广播 → 前端实时刷新
+  ctx.effect(() => {
+    let cleanup: (() => void) | null = null
+    try {
+      const root = resolveWorkspace(ctx)
+      if (root) cleanup = startWorkspaceWatcher(root)
+    } catch (err) {
+      console.warn('[ui-enhance] watcher 启动失败:', String(err))
+    }
+    return () => {
+      if (cleanup) { cleanup(); cleanup = null }
+    }
+  }, 'ui-enhance: workspace watcher')
 }
 
 /** 路由分发。 */
@@ -239,6 +311,21 @@ async function handle(ctx: Context, req: Req, res: Res): Promise<void> {
     } catch (err) {
       json(res, 500, { error: `tree failed: ${String(err instanceof Error ? err.message : err)}` })
     }
+    return
+  }
+
+  if (req.method === 'GET' && suffix === '/events') {
+    // SSE：文件系统变化时推送 `changed` 事件，前端收到即刷新 git 徽标（实时）
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    })
+    // 发送初始注释，确保连接建立
+    res.write(': connected\n\n')
+    sseClients.add(res)
+    req.on('close', () => { sseClients.delete(res) })
     return
   }
 

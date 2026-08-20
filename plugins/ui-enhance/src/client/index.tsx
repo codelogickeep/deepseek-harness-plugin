@@ -626,6 +626,41 @@ function FileTreePanel(): React.ReactElement {
     }
   }, [])
 
+  // 轻量刷新：同步 git 汇总 + 根级条目（git 徽标 + 新增/删除），保留展开状态
+  const refreshGit = React.useCallback(async (): Promise<void> => {
+    try {
+      const r = await fetch('/api/ui-enhance/tree?dir=')
+      const d: { git: GitSummary | null, entries: TreeEntry[] } = await r.json()
+      setGit(d.git ?? null)
+      setRootNodes((prev) => {
+        if (!prev) return prev
+        const oldMap = new Map(prev.map((n) => [n.entry.path, n]))
+        const next = (d.entries ?? []).map((e): TreeNode => {
+          const old = oldMap.get(e.path)
+          if (old) {
+            // 保留展开/已加载子节点，仅同步 git 字段
+            return old.entry.git === e.git ? old : { ...old, entry: { ...old.entry, git: e.git ?? null } }
+          }
+          // 新增条目（文件新建）
+          return { entry: e, loaded: false, children: [], expanded: false, loading: false }
+        })
+        return next
+      })
+    } catch { /* 刷新失败静默，不影响已显示内容 */ }
+  }, [])
+
+  // 面板打开时建立 SSE 连接：文件系统变化（git 提交/文件增删）→ 实时刷新 git 徽标
+  React.useEffect(() => {
+    if (!open) return
+    let es: EventSource | null = null
+    try {
+      es = new EventSource('/api/ui-enhance/events')
+      es.addEventListener('changed', () => { void refreshGit() })
+      es.onerror = (): void => { /* 连接断开静默，等待重连 */ }
+    } catch { /* 不支持 EventSource 时回退（无实时刷新） */ }
+    return () => { es?.close() }
+  }, [open, refreshGit])
+
   // 打开时让主内容区（centerCol）往左缩，右侧让出面板宽度给文件树（与左侧栏对称，融为一体）
   React.useEffect(() => {
     if (typeof document === 'undefined') return
