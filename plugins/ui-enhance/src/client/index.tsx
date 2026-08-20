@@ -691,8 +691,6 @@ function FileTreePanel(): React.ReactElement {
     if (next && rootNodes === null) void loadRoot()
   }
 
-  const refresh = (): void => { void loadRoot() }
-
   /** 双击文件 → 在当前 IDE 中打开该文件（Node 半身支持 file 参数）。 */
   const openFile = async (filePath: string): Promise<void> => {
     try {
@@ -834,7 +832,7 @@ function FileTreePanel(): React.ReactElement {
               cursor: 'col-resize', zIndex: 3,
             }}
           />
-          {/* 头：74px 高、两行式，分隔线对齐中间区域（y 74，即中间 76 上移 2px） */}
+          {/* 头：74px 高、路径区 + 复制按钮，分隔线对齐中间区域（y 74，即中间 76 上移 2px） */}
           <div style={{
             display: 'flex', flexDirection: 'column',
             padding: '0 14px',
@@ -842,11 +840,11 @@ function FileTreePanel(): React.ReactElement {
             height: 74, boxSizing: 'border-box',
             position: 'relative',
           }}>
-            {/* 第一行：当前路径（相对项目根，默认 '/'），可换行最多两行 + 复制按钮 */}
+            {/* 路径区：当前路径（以 . 开头），可换行最多三行 */}
             <div style={{
               display: 'flex', alignItems: 'flex-start', gap: 6,
               minHeight: 30, flexShrink: 0, paddingTop: 4,
-              paddingRight: 30,
+              paddingRight: 26,
             }}>
               <span
                 title={selPath === '/' ? '项目根目录' : '回到项目根目录'}
@@ -855,9 +853,9 @@ function FileTreePanel(): React.ReactElement {
                   fontWeight: 400, fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                   flex: 1, color: '#0f1115', cursor: 'pointer',
                   minWidth: 0,
-                  // 最多两行，超出省略号（…）
+                  // 最多三行，超出省略号（…）
                   display: '-webkit-box',
-                  WebkitLineClamp: 2,
+                  WebkitLineClamp: 3,
                   WebkitBoxOrient: 'vertical',
                   whiteSpace: 'normal',
                   overflow: 'hidden',
@@ -865,23 +863,22 @@ function FileTreePanel(): React.ReactElement {
                   lineHeight: 1.45,
                 }}
               >
-                {selPath}
+                {selPath === '/' ? '.' : `.${selPath}`}
               </span>
+            </div>
+            {/* 复制按钮：绝对定位于头部右下角，固定位置不随路径换行而移动 */}
+            <div style={{
+              position: 'absolute', bottom: 3, right: 14, height: 22,
+              display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+            }}>
               <button
                 type="button"
-                onClick={() => void copyPath(selPath)}
+                onClick={() => void copyPath(selPath === '/' ? '.' : `.${selPath}`)}
                 style={iconBtn}
                 title="复制路径"
               >
                 {copied ? '✓' : '⧉'}
               </button>
-            </div>
-            {/* 刷新按钮：绝对定位于头部底部右侧，不随路径换行而移动 */}
-            <div style={{
-              position: 'absolute', bottom: 3, right: 14, height: 22,
-              display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-            }}>
-              <button type="button" onClick={refresh} style={refreshBtn} title="刷新">⟳</button>
             </div>
           </div>
           {/* 树 */}
@@ -940,14 +937,6 @@ function FileTreePanel(): React.ReactElement {
 const iconBtn: React.CSSProperties = {
   border: 'none', background: 'transparent', color: '#6b7280',
   cursor: 'pointer', fontSize: 14, padding: '2px 5px', borderRadius: 5,
-}
-
-/** 刷新按钮（文件树头部）：比普通 iconBtn 更大更醒目。 */
-const refreshBtn: React.CSSProperties = {
-  border: 'none', background: 'transparent', color: '#374151',
-  cursor: 'pointer', fontSize: 20, padding: '0 6px', borderRadius: 6,
-  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-  lineHeight: 1,
 }
 
 /** git 计数小徽标（底部栏）。 */
