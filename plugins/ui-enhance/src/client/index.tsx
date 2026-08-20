@@ -547,6 +547,224 @@ const overviewCell: React.CSSProperties = {
   color: 'var(--dsw-text-secondary, #cbd5e1)',
 }
 
+/* ---------- 文件树侧栏 ---------- */
+
+/** 树条目（来自 Node 半身 /tree 路由）。 */
+interface TreeEntry {
+  name: string
+  path: string
+  type: 'dir' | 'file'
+  git: string | null
+  size: number | null
+}
+
+/** git 状态 → 徽标文案/颜色。 */
+function gitBadge(code: string | null): { label: string, color: string, bg: string } | null {
+  if (!code) return null
+  const first = code[0]
+  if (first === 'M') return { label: 'M', color: '#f59e0b', bg: 'rgba(245,158,11,0.16)' }
+  if (first === 'A') return { label: 'A', color: '#22c55e', bg: 'rgba(34,197,94,0.16)' }
+  if (first === 'D') return { label: 'D', color: '#ef4444', bg: 'rgba(239,68,68,0.16)' }
+  if (first === 'R') return { label: 'R', color: '#8b5cf6', bg: 'rgba(139,92,246,0.16)' }
+  if (first === 'C') return { label: 'C', color: '#8b5cf6', bg: 'rgba(139,92,246,0.16)' }
+  if (first === 'U') return { label: 'U', color: '#f97316', bg: 'rgba(249,115,22,0.16)' }
+  if (first === '?') return { label: '?', color: '#64748b', bg: 'rgba(148,163,184,0.16)' }
+  return { label: first, color: '#cbd5e1', bg: 'rgba(148,163,184,0.16)' }
+}
+
+/** 单个树节点（带展开状态的 directory）。 */
+interface TreeNode {
+  entry: TreeEntry
+  loaded: boolean
+  children: TreeEntry[]
+  expanded: boolean
+  loading: boolean
+  error?: string
+}
+
+/** 右侧文件树抽屉 + 右上角开关。 */
+function FileTreePanel(): React.ReactElement {
+  const [open, setOpen] = React.useState(false)
+  const [root, setRoot] = React.useState('')
+  const [branch, setBranch] = React.useState<string | null>(null)
+  const [rootNodes, setRootNodes] = React.useState<TreeNode[] | null>(null)
+  const [loadingRoot, setLoadingRoot] = React.useState(false)
+  const [err, setErr] = React.useState('')
+  // 树版本号：任一节点展开/收起后 +1，强制重渲染
+  const [, setTreeVersion] = React.useState(0)
+
+  // 打开时加载根目录
+  const loadRoot = React.useCallback(async () => {
+    setLoadingRoot(true)
+    setErr('')
+    try {
+      const r = await fetch('/api/ui-enhance/tree?dir=')
+      const d: { root: string, branch: string | null, entries: TreeEntry[] } = await r.json()
+      setRoot(d.root)
+      setBranch(d.branch)
+      setRootNodes((d.entries ?? []).map((e) => ({ entry: e, loaded: false, children: [], expanded: false, loading: false })))
+    } catch (e) {
+      setErr(`加载失败: ${String(e)}`)
+    } finally {
+      setLoadingRoot(false)
+    }
+  }, [])
+
+  // 展开/收起目录
+  const toggleDir = async (node: TreeNode): Promise<void> => {
+    if (node.expanded) {
+      node.expanded = false
+      setTreeVersion((v) => v + 1)
+      return
+    }
+    node.expanded = true
+    if (!node.loaded) {
+      node.loading = true
+      try {
+        const r = await fetch(`/api/ui-enhance/tree?dir=${encodeURIComponent(node.entry.path)}`)
+        const d: { entries: TreeEntry[] } = await r.json()
+        node.children = (d.entries ?? []).map((e) => ({ entry: e, loaded: false, children: [], expanded: false, loading: false }))
+        node.loaded = true
+      } catch {
+        node.error = '加载失败'
+      } finally {
+        node.loading = false
+      }
+    }
+    setTreeVersion((v) => v + 1)
+  }
+
+  const toggleOpen = (): void => {
+    const next = !open
+    setOpen(next)
+    if (next && rootNodes === null) void loadRoot()
+  }
+
+  const refresh = (): void => { void loadRoot() }
+
+  /** 递归渲染目录。 */
+  const renderLevel = (nodes: TreeNode[], depth: number): React.ReactElement[] => {
+    return nodes.map((node) => {
+      const entry = node.entry
+      const badge = gitBadge(entry.git)
+      const indent = { paddingLeft: 8 + depth * 14 }
+      return (
+        <React.Fragment key={entry.path}>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => { if (entry.type === 'dir') void toggleDir(node) }}
+            style={{
+              ...indent,
+              display: 'flex', alignItems: 'center', gap: 6,
+              paddingTop: 2, paddingBottom: 2, paddingRight: 8,
+              cursor: entry.type === 'dir' ? 'pointer' : 'default',
+              borderRadius: 6, fontSize: 13,
+              color: 'var(--dsw-text-secondary, #cbd5e1)',
+              whiteSpace: 'nowrap',
+            }}
+            title={entry.path}
+          >
+            <span style={{ fontSize: 11, width: 14, color: '#94a3b8' }}>
+              {entry.type === 'dir' ? (node.expanded ? '▾' : '▸') : ''}
+            </span>
+            <span style={{ fontSize: 13 }}>{entry.type === 'dir' ? '📁' : '📄'}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.name}</span>
+            {badge ? (
+              <span style={{
+                fontSize: 10, fontWeight: 800, padding: '0 5px', borderRadius: 4,
+                color: badge.color, background: badge.bg, marginLeft: 'auto',
+              }}>{badge.label}</span>
+            ) : null}
+          </div>
+          {entry.type === 'dir' && node.expanded ? (
+            <div>
+              {node.loading ? <div style={{ ...indent, fontSize: 12, color: '#64748b' }}>加载中…</div> : null}
+              {node.error ? <div style={{ ...indent, fontSize: 12, color: '#ef4444' }}>{node.error}</div> : null}
+              {node.loaded && !node.loading ? renderLevel(node.children, depth + 1) : null}
+            </div>
+          ) : null}
+        </React.Fragment>
+      )
+    })
+  }
+
+  const nodes = rootNodes ?? []
+
+  // 头部打开开关按钮
+  const toggleBtnStyle: React.CSSProperties = {
+    ...chipBase,
+    cursor: 'pointer',
+    background: open ? 'rgba(139,92,246,0.22)' : 'rgba(139,92,246,0.10)',
+    color: 'var(--dsw-text-primary, #f1f5f9)',
+    border: open ? '1px solid rgba(139,92,246,0.55)' : '1px solid rgba(139,92,246,0.3)',
+    padding: '3px 9px',
+    borderRadius: 8,
+    fontSize: 13,
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={toggleOpen}
+        style={toggleBtnStyle}
+        title={open ? '关闭文件树' : '项目文件树'}
+        aria-expanded={open}
+      >
+        <span style={{ fontSize: 13 }}>🗂</span>
+      </button>
+      {open ? (
+        <div style={{
+          position: 'fixed',
+          top: 0, right: 0, bottom: 0,
+          width: 320,
+          zIndex: 2000,
+          background: 'var(--dsw-surface, #0f172a)',
+          borderLeft: '1px solid var(--dsw-border, rgba(148,163,184,0.3))',
+          boxShadow: '-8px 0 24px rgba(0,0,0,0.25)',
+          display: 'flex', flexDirection: 'column',
+          color: 'var(--dsw-text-primary, #e2e8f0)',
+          fontFamily: 'inherit',
+        }}>
+          {/* 头 */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '10px 14px', borderBottom: '1px solid var(--dsw-border, rgba(148,163,184,0.2))',
+          }}>
+            <span style={{ fontWeight: 800, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {root ? root.split('/').pop() || root : '工作区'}
+            </span>
+            {branch ? (
+              <span style={{
+                fontSize: 11, fontWeight: 700, color: '#fbbf24', background: 'rgba(245,158,11,0.15)',
+                padding: '1px 7px', borderRadius: 999, border: '1px solid rgba(245,158,11,0.4)',
+              }}>⎇ {branch}</span>
+            ) : null}
+            <span style={{ flex: 1 }} />
+            <button type="button" onClick={refresh} style={iconBtn} title="刷新">⟳</button>
+            <button type="button" onClick={() => setOpen(false)} style={iconBtn} title="关闭">✕</button>
+          </div>
+          {/* 树 */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 6px' }}>
+            {loadingRoot ? <div style={{ fontSize: 12, color: '#64748b', padding: 8 }}>加载中…</div> : null}
+            {err ? <div style={{ fontSize: 12, color: '#ef4444', padding: 8 }}>{err}</div> : null}
+            {!loadingRoot && !err && nodes.length === 0 ? (
+              <div style={{ fontSize: 12, color: '#64748b', padding: 8 }}>空工作区或无文件</div>
+            ) : null}
+            {!loadingRoot && !err ? renderLevel(nodes, 0) : null}
+          </div>
+        </div>
+      ) : null}
+    </>
+  )
+}
+
+const iconBtn: React.CSSProperties = {
+  border: 'none', background: 'transparent', color: 'var(--dsw-text-secondary, #cbd5e1)',
+  cursor: 'pointer', fontSize: 14, padding: '2px 5px', borderRadius: 5,
+}
+
 /* ---------- 插件主体 ---------- */
 
 export const inject = ['slots', 'locale']
@@ -580,6 +798,12 @@ export function apply(ctx: ClientContext): void {
       id: 'ui-enhance-tool-stats',
       order: 6,
     }, ToolCallStats))
+  ctx.slots.inject('conversation.session.header.utilities', () =>
+    ctx.slots.register({
+      name: 'conversation.session.header.utilities',
+      id: 'ui-enhance-file-tree',
+      order: 90,
+    }, FileTreePanel))
   ctx.slots.inject('conversation.session.header.utilities', () =>
     ctx.slots.register({
       name: 'conversation.session.header.utilities',
