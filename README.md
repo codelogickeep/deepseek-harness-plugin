@@ -17,6 +17,7 @@ status: active
 | **MiniMax 网页搜索** (minimax-search) | 把 MiniMax 搜索注册为 DSH 宿主 Web 搜索 provider，`web_search` 工具直接可用 | DSH 宿主插件 (`cordis.patch.yml`) |
 | **自研定时调度** (cron-scheduler) | 标准 **5 字段 cron 表达式**定时任务（`0 10 * * *`），配置文件驱动、跨重启防重复，到点唤醒指定 Agent 会话 | DSH 宿主插件 (`cordis.patch.yml`) |
 | **浏览器阅读** (browser-reader) | Playwright 驱动真实 Chromium/Edge，`web_read` 系列工具确定性读 JS 渲染页面（含 console/截图/继续读/关闭） | DSH 宿主插件 (`cordis.patch.yml` + profile 依赖 playwright-core) |
+| **增强型 UI 交互界面** (ui-enhance) | 浏览器端 UI 增强插件：会话头部实时状态面板 + 右上角打开 IDE（VS Code/Cursor/Windsurf/Trae 动态检测） | client bundle 插件（`dsh.client.platform=web`） |
 | **flash-worker**（pro 指挥、flash 执行） | 给主 agent 加 `flash_agent` 工具，把具体编码任务委派给 flash 模型子 agent，形成 orchestrator-worker 两级协同 | Agent preset（脚手架渲染安装） |
 
 > 另启用 DSH **官方** `dsh-schedule`（`schedule_create`/`list`/`delete`，after/at/every）
@@ -35,6 +36,7 @@ status: active
 | 3 | 自研定时调度 | [插件 3](#插件-3自研定时调度-cron-scheduler) · 事故复盘 [docs/CRON-SCHEDULER-INCIDENT.md](docs/CRON-SCHEDULER-INCIDENT.md) |
 | 4 | flash-worker（pro 指挥、flash 执行） | [docs/FLASH-WORKER.md](docs/FLASH-WORKER.md) 原理/安装/使用 |
 | 5 | 浏览器阅读 (browser-reader) | [插件 5](#插件-5浏览器阅读-browser-reader) · 文档 [docs/BROWSER-READER.md](docs/BROWSER-READER.md) |
+| 6 | 增强型 UI 交互界面 (ui-enhance) | [插件 6](#插件-6增强型-ui-交互界面-ui-enhance) · 文档 [docs/UI-ENHANCE.md](docs/UI-ENHANCE.md) |
 | — | 脚手架/方法论 | [docs/PLUGIN-ECOSYSTEM.md](docs/PLUGIN-ECOSYSTEM.md) · [docs/DSH-NOTES.md](docs/DSH-NOTES.md) |
 | — | 插件容错研究 | [docs/PLUGIN-RESILIENCE.md](docs/PLUGIN-RESILIENCE.md)（为什么第三方插件能搞崩 DSH + 自检防线）|
 
@@ -202,6 +204,34 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 
 ---
 
+## 插件 6：增强型 UI 交互界面（ui-enhance）
+
+浏览器端（client bundle）UI 增强插件，为 DSH Web 界面**增量**添加官方没有的交互能力。**原则：只做增量，不覆盖/替换官方渲染器。**
+
+能力：
+
+| 能力 | 说明 |
+| --- | --- |
+| **② 会话状态面板** | 会话头部实时显示 🟢运行中/⚪空闲 + 当前工具名 + 排队计数 + 会话短ID |
+| **④ 打开 IDE** | 会话头部右上角连体按钮「⧉ IDE 名 + ▾」，一键打开当前工作区；▾ 菜单**只显示本机已装 IDE**（VS Code / Cursor / Windsurf / Trae 动态检测），选中即切换 + localStorage 记住 |
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml — ui-enhance 是 client 包插件，
+# 由 install-plugins.mjs 构建并装进 profile，client bundle 由 DSH 自动服务。
+```
+
+- **源码**：`plugins/ui-enhance/`（`src/index.ts` Node 半身 + `src/client/` client 半身）
+- **构建**：`tsdown`（client bundle closure-factory） + `tsc`（Node 半身）
+- **安装**：`npm run install:plugins`（自动：构建 → Node 半身 self-check → pnpm 装进 profile → bundle 验证）
+- **通道**：client 用 `fetch('/api/ui-enhance/...')` 调 Node 半身 `webServer` 路由（dsh-webui 同款范式）
+- **文档**：[docs/UI-ENHANCE.md](docs/UI-ENHANCE.md)（架构图 + 部署验收 + inject 门禁事故教训）
+
+> **inject 门禁**（重要）：cordis 强制「访问服务必须在插件的 `inject` 导出里声明」。
+> `scripts/check-plugin.mjs` 已模拟该门禁（Proxy stub），安装前自检可拦截
+> 「未声明 inject 就访问 ctx.xxx」——避免 DSH 启动即崩。
+
+---
+
 ## 脚手架：如何往这个项目里加新插件
 
 **目录规矩（重要，新插件必须遵守）**：
@@ -274,10 +304,14 @@ npm run install:flash-worker -- --show
 ├── plugins/                 # DSH 宿主插件（每个插件一个自包含子目录）
 │   ├── minimax-search/
 │   │   └── minimax-search.mjs
-│   └── cron-scheduler/
-│       ├── cron-scheduler.mjs   # 自研 cron 定时调度入口
-│       ├── cron.js              #   cron 解析/下一命中（核心算法）
-│       └── scheduler.js         #   调度状态机/防重复（核心算法）
+│   ├── cron-scheduler/
+│   │   ├── cron-scheduler.mjs   # 自研 cron 定时调度入口
+│   │   ├── cron.js              #   cron 解析/下一命中（核心算法）
+│   │   └── scheduler.js         #   调度状态机/防重复（核心算法）
+│   └── ui-enhance/              # client bundle 插件（npm 包形态）
+│       ├── src/index.ts         #   Node 半身：webServer 路由(open-in-editor/editors)
+│       ├── src/client/          #   client 半身：状态面板 + 打开IDE按钮
+│       └── tsdown.config.ts     #   closure-factory bundle 构建
 ├── presets/                 # Agent preset（脚手架渲染安装到 ~/.dsh/.agent-presets/）
 │   └── flash-worker/
 │       ├── agent.cordis.yml.tpl #   含 {{FLASH_PROVIDER}}/{{FLASH_MODEL}} 占位符
@@ -300,6 +334,7 @@ npm run install:flash-worker -- --show
 │   ├── CRON-SCHEDULER-INCIDENT.md # 定时任务事故复盘 + 插件开发法则
 │   ├── MINIMAX-SEARCH.md    # MiniMax 搜索接入指南
 │   ├── BROWSER-READER.md    # 浏览器阅读插件（web_read 系列工具）
+│   ├── UI-ENHANCE.md        # 增强型 UI 交互界面插件（架构/部署/事故教训）
 │   └── PLUGIN-RESILIENCE.md # 第三方插件容错研究（为什么 fail-loud + 自检防线）
 └── .env.example
 ```
@@ -313,6 +348,7 @@ npm run install:flash-worker -- --show
 - [DSH 知识沉淀](docs/DSH-NOTES.md)（官方动态 + 宿主插件机制实战）
 - [MiniMax 搜索接入指南](docs/MINIMAX-SEARCH.md)（一键接入 DSH 宿主 Web 搜索）
 - [浏览器阅读插件](docs/BROWSER-READER.md)（web_read 系列，读 JS 渲染页面）
+- [增强型 UI 交互界面插件](docs/UI-ENHANCE.md)（状态面板 + 打开 IDE，架构/部署/注入门禁）
 - [第三方插件容错研究](docs/PLUGIN-RESILIENCE.md)（第三方插件为何能搞崩 DSH + 自检防线）
 - [flash-worker 多 Agent 协同](docs/FLASH-WORKER.md)（pro 指挥、flash 执行的 preset 原理/安装/使用）
 
