@@ -104,6 +104,8 @@ const ideBtn: React.CSSProperties = {
   background: 'linear-gradient(135deg, rgba(37,99,235,0.85) 0%, rgba(29,78,216,0.85) 100%)',
   border: 'none',
   boxShadow: 'none',
+  // 中间与下拉直角拼接（圆角只由外层容器提供）
+  borderRadius: 0,
   transition: 'filter 0.15s ease, transform 0.1s ease, background 0.15s ease',
   fontFamily: 'inherit',
 }
@@ -146,7 +148,7 @@ const ideGroupHover: React.CSSProperties = {
   background: 'linear-gradient(135deg, rgba(37,99,235,0.95) 0%, rgba(29,78,216,0.95) 100%)',
   boxShadow: '0 1px 6px rgba(37,99,235,0.4)',
 }
-/** ▾ 下拉分区：比主按钮颜色略淡，左侧细分隔线。 */
+/** ▾ 下拉分区：比主按钮颜色略淡，左侧细分隔线；与主按钮直角拼接。 */
 const ideCaretBtn: React.CSSProperties = {
   ...chipBase,
   cursor: 'pointer',
@@ -154,6 +156,8 @@ const ideCaretBtn: React.CSSProperties = {
   background: 'rgba(255,255,255,0.10)',
   border: 'none',
   borderLeft: '1px solid rgba(255,255,255,0.35)',
+  // 直角拼接（不做圆角）
+  borderRadius: 0,
   padding: '3px 7px',
   width: 28,
   justifyContent: 'center',
@@ -291,7 +295,7 @@ function OpenInEditorButton(): React.ReactElement {
     return () => document.removeEventListener('mousedown', onDoc)
   }, [menuOpen])
 
-  const label = state === 'busy' ? '打开中…' : state === 'done' ? '已打开 ✓' : state === 'error' ? '打开失败' : `打开 ${current.label}`
+  const label = state === 'busy' ? '打开中…' : state === 'done' ? '已打开 ✓' : state === 'error' ? '打开失败' : current.label
   const btnStyle = state === 'busy' ? ideBtnBusy : state === 'done' ? ideBtnDone : state === 'error' ? ideBtnErr
     : hovered ? ideBtnHover : pressed ? ideBtnActive : ideBtn
 
