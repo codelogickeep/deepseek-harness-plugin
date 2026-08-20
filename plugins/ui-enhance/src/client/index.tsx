@@ -840,11 +840,13 @@ function FileTreePanel(): React.ReactElement {
             padding: '0 14px',
             borderBottom: '1px solid rgb(229, 231, 235)',
             height: 74, boxSizing: 'border-box',
+            position: 'relative',
           }}>
             {/* 第一行：当前路径（相对项目根，默认 '/'），可换行最多两行 + 复制按钮 */}
             <div style={{
               display: 'flex', alignItems: 'flex-start', gap: 6,
               minHeight: 30, flexShrink: 0, paddingTop: 4,
+              paddingRight: 30,
             }}>
               <span
                 title={selPath === '/' ? '项目根目录' : '回到项目根目录'}
@@ -874,10 +876,10 @@ function FileTreePanel(): React.ReactElement {
                 {copied ? '✓' : '⧉'}
               </button>
             </div>
-            {/* 第二行：操作按钮，与中间 tabs 行同高（第一行两行路径时自动收缩） */}
+            {/* 刷新按钮：绝对定位于头部底部右侧，不随路径换行而移动 */}
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
-              justifyContent: 'flex-end', minHeight: 22,
+              position: 'absolute', bottom: 3, right: 14, height: 22,
+              display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
             }}>
               <button type="button" onClick={refresh} style={refreshBtn} title="刷新">⟳</button>
             </div>
