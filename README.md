@@ -215,7 +215,7 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 | **② 会话状态面板** | 会话头部实时显示 🟢运行中/⚪空闲 + 当前工具名 + 排队计数 |
 | **③ 工具调用统计 (A1)** | 头部 🔧N 徽标，点击展开面板：总数/成功/失败/均耗时 + 工具分布条 + 最近调用流水（真实耗时） |
 | **④ 打开 IDE** | 会话头部右上角连体按钮「⧉ IDE 名 + ▾」，一键打开当前工作区；▾ 菜单**只显示本机已装 IDE**（VS Code / Cursor / Windsurf / Trae 动态检测），选中即切换 + localStorage 记住 |
-| **项目文件树** | 右上角**最右**「⋮☰」按钮，右侧浅色融入式文件树（对齐左侧栏风格）：递归目录 + git 状态徽标；**可拖拽调宽**（220-520）；**双击文件在 IDE 中打开**；头部**相对路径显示+复制**（默认 `/`）；底部 git 汇总（分支/↑领先/N 处变更/最近提交） |
+| **项目文件树** | 右上角**最右**「⋮☰」按钮，右侧浅色融入式文件树（对齐左侧栏风格）：递归目录 + git 状态徽标；**可拖拽调宽**（220-520）；**双击文件在 IDE 中打开**；头部**路径显示+复制**（`./` 开头，最多三行，选中项高亮）；底部 git 汇总（分支/↑领先/N 处变更/最近提交） |
 | **布局与精简** | 头部顺序：状态→统计→IDE→文件树(最右)；隐藏官方「Session log 下载」按钮（同 id + priority -100 覆盖） |
 
 ```yaml
@@ -312,8 +312,8 @@ npm run install:flash-worker -- --show
 │   │   ├── cron.js              #   cron 解析/下一命中（核心算法）
 │   │   └── scheduler.js         #   调度状态机/防重复（核心算法）
 │   └── ui-enhance/              # client bundle 插件（npm 包形态）
-│       ├── src/index.ts         #   Node 半身：webServer 路由(open-in-editor/editors)
-│       ├── src/client/          #   client 半身：状态面板 + 打开IDE按钮
+│       ├── src/index.ts         #   Node 半身：webServer 路由(open-in-editor/editors/tree/git)
+│       ├── src/client/          #   client 半身：状态面板 + 工具统计 + 文件树 + 打开IDE按钮
 │       └── tsdown.config.ts     #   closure-factory bundle 构建
 ├── presets/                 # Agent preset（脚手架渲染安装到 ~/.dsh/.agent-presets/）
 │   └── flash-worker/

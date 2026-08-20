@@ -4,8 +4,8 @@
 
 ## 协作模式：pro 指挥 + flash 执行
 
-当前默认 agent-preset 为 flash-worker：主 agent（deepseek-v4-pro）负责规划与关键链路，
-flash 模型子 agent（通过 flash_agent 工具）负责执行具体子任务。
+当前默认 agent-preset 为 flash-worker：主 agent（glm-5.3，通过 volce-agent-plan）负责规划与关键链路，
+flash 模型子 agent（deepseek-v4-flash，通过 flash_agent 工具）负责执行具体子任务。
 
 ## 委派原则
 
