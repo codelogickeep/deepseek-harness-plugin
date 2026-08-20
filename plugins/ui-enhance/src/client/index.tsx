@@ -870,7 +870,7 @@ function FileTreePanel(): React.ReactElement {
               display: 'flex', alignItems: 'center', gap: 8, height: 37, flexShrink: 0,
               justifyContent: 'flex-end',
             }}>
-              <button type="button" onClick={refresh} style={iconBtn} title="刷新">⟳</button>
+              <button type="button" onClick={refresh} style={refreshBtn} title="刷新">⟳</button>
             </div>
           </div>
           {/* 树 */}
@@ -929,6 +929,14 @@ function FileTreePanel(): React.ReactElement {
 const iconBtn: React.CSSProperties = {
   border: 'none', background: 'transparent', color: '#6b7280',
   cursor: 'pointer', fontSize: 14, padding: '2px 5px', borderRadius: 5,
+}
+
+/** 刷新按钮（文件树头部）：比普通 iconBtn 更大更醒目。 */
+const refreshBtn: React.CSSProperties = {
+  border: 'none', background: 'transparent', color: '#374151',
+  cursor: 'pointer', fontSize: 20, padding: '0 6px', borderRadius: 6,
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  lineHeight: 1,
 }
 
 /** git 计数小徽标（底部栏）。 */
