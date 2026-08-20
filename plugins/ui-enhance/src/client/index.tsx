@@ -871,7 +871,6 @@ function FileTreePanel(): React.ReactElement {
               justifyContent: 'flex-end',
             }}>
               <button type="button" onClick={refresh} style={iconBtn} title="刷新">⟳</button>
-              <button type="button" onClick={() => setOpen(false)} style={iconBtn} title="关闭">✕</button>
             </div>
           </div>
           {/* 树 */}
