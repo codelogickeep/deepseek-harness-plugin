@@ -87,15 +87,6 @@ const queueBadge: React.CSSProperties = {
   border: '1px solid rgba(245,158,11,0.6)',
 }
 
-const sessionChip: React.CSSProperties = {
-  ...chipBase,
-  background: 'rgba(100,116,139,0.14)',
-  color: '#475569',
-  border: '1px solid rgba(100,116,139,0.4)',
-  fontWeight: 600,
-  fontSize: 12,
-}
-
 /** IDE 按钮（主按钮）：高对比蓝色实底。 */
 const ideBtn: React.CSSProperties = {
   ...chipBase,
@@ -173,7 +164,6 @@ const ideCaretBtnHover: React.CSSProperties = {
 
 /** 会话快照钩子的最小形状（与运行时契约对齐）。 */
 interface SessionKit {
-  sessionId: string
   useSession: <T>(selector?: (s: unknown) => T) => T | undefined
 }
 
@@ -198,14 +188,13 @@ interface NodeLike {
 
 /** ② 会话头部「实时状态面板」。 */
 function SessionStatusPanel(props: SessionKit): React.ReactElement | null {
-  const { sessionId, useSession } = props
+  const { useSession } = props
   const snap = useSession<SnapshotLike>((s) => s as SnapshotLike)
 
   const running = Boolean(snap?.running)
   const runningCalls = snap?.runningCalls ?? []
   const toolName_ = runningCalls.length > 0 ? (runningCalls[0]?.tool?.name ?? '') : ''
   const queued = (snap?.queue?.length ?? 0) - (running ? 1 : 0)
-  const shortId = sessionId?.slice(0, 8) ?? ''
 
   return (
     <>
@@ -218,9 +207,6 @@ function SessionStatusPanel(props: SessionKit): React.ReactElement | null {
         <span style={queueBadge} title={`${queued} 条消息排队中`}>
           ⏳ {queued}
         </span>
-      ) : null}
-      {shortId && !running ? (
-        <span style={sessionChip} title={sessionId}>#{shortId}</span>
       ) : null}
     </>
   )
