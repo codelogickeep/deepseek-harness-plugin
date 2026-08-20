@@ -2,7 +2,34 @@
 
 **DSH（DeepSeek Harness）插件集合仓库 + 安装脚手架**：把你有用的 DSH 插件统一沉淀在这里，并提供开发/安装插件的脚手架。
 
-当前已收录插件：
+🚀 **快速开始**（一键装齐全部插件）：
+
+```bash
+# 1) 先跑一次 `npx @deepseek-ai/dsh web`，让 DSH 生成 cordis.patch.yml 骨架
+# 2) 克隆本仓库
+git clone git@github.com:codelogickeep/deepseek-harness-plugin.git
+cd deepseek-harness-plugin
+npm install                       # 根依赖
+cd plugins/ui-enhance && pnpm install && cd ../..  # ui-enhance 构建依赖
+npm run install:plugins           # 一键：构建+自检+装进 profile+自动补 patch 引用
+# 3) 重启 DSH —— 全部插件生效
+```
+
+![DSH 插件集合](https://img.shields.io/badge/dsh-plugin-blue) ![MIT](https://img.shields.io/badge/License-MIT-green)
+
+**✨ 亮点：增强型 UI（ui-enhance）—— 右侧实时文件树**
+
+左侧侧边栏同款浅色风格的文件树，拖拽调宽、双击文件在 IDE 中打开、路径一键复制，**git 状态实时刷新**（fs.watch + SSE，提交/改文件即时更新）：
+- 📁 递归目录 + git 状态徽标（M/A/D/U ←）· 🐘 可拖拽调宽 220-520px
+- 🖱 双击文件 → 在当前 IDE（VS Code/Cursor/Windsurf/Trae）打开
+- 📋 头部路径显示 + 一键复制（`./` 开头）
+- ⚡ **实时刷新**：改文件/提交后文件树即时更新，无需手动刷新
+
+![ui-enhance 右侧实时文件树](docs/demo-filetree.png)
+
+---
+
+**当前已收录插件：**
 
 | 插件 | 说明 | 形态 |
 | --- | --- | --- |
@@ -397,4 +424,4 @@ npm test
 
 ## License
 
-MIT
+[MIT](LICENSE) — 与 DSH 官方一致的宽松协议，可自由使用/修改/商用，保留版权声明即可。
