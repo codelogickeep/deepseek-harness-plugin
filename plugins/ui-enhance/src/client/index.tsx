@@ -586,4 +586,15 @@ export function apply(ctx: ClientContext): void {
       id: 'ui-enhance-open-editor',
       order: 100,
     }, OpenInEditorButton))
+
+  // 隐藏官方「Session log 下载」按钮：官方 dsh-session-log-export 在该 slot
+  // 注册 id=session-log-download（priority 默认 0）。按 slot 系统语义，
+  // 「同 id + 更低 priority 覆盖原生条目」（dsh-webui 已验证此机制），
+  // 我们用 priority -100 注册同 id、渲染 null 将其隐藏。
+  ctx.slots.inject('conversation.session.header.utilities', () =>
+    ctx.slots.register({
+      name: 'conversation.session.header.utilities',
+      id: 'session-log-download',
+      priority: -100,
+    }, () => null))
 }
