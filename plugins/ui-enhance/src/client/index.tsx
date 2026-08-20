@@ -182,6 +182,18 @@ interface SnapshotLike {
   running?: boolean
   runningCalls?: readonly { tool?: { name?: string } | null }[] | null
   queue?: readonly unknown[] | null
+  /** 完整消息流，含已完成的 tool-result 节点（A1 数据源）。 */
+  nodes?: readonly NodeLike[] | null
+}
+
+/** 会话消息流节点的最小形状（只取 A1 关心的部分）。 */
+interface NodeLike {
+  kind?: string
+  time?: number
+  isError?: boolean
+  /** callTime 是 ToolResultNode 顶层字段（call 在窗口内时为开始时间戳），非 call 内部。 */
+  callTime?: number | null
+  call?: { name?: string | null, argsRaw?: string | null } | null
 }
 
 /** ② 会话头部「实时状态面板」。 */
@@ -371,6 +383,184 @@ function OpenInEditorButton(): React.ReactElement {
   )
 }
 
+/* ---------- A1：工具调用统计 ---------- */
+
+/** 汇总出的单次工具调用记录。 */
+interface CallStat {
+  name: string
+  ok: boolean
+  durationMs: number | null
+  time: number
+}
+
+/** 徽标样式（chip 风格，可点击）。 */
+const statsBadge: React.CSSProperties = {
+  ...chipBase,
+  cursor: 'pointer',
+  background: 'rgba(139,92,246,0.16)',
+  color: '#7c3aed',
+  border: '1px solid rgba(139,92,246,0.5)',
+  padding: '3px 11px',
+  fontSize: 13,
+}
+const statsBadgeHover: React.CSSProperties = {
+  ...statsBadge,
+  background: 'rgba(139,92,246,0.26)',
+}
+const statsBadgeRunning: React.CSSProperties = {
+  ...statsBadge,
+  background: 'rgba(34,197,94,0.16)',
+  color: '#16a34a',
+  border: '1px solid rgba(34,197,94,0.5)',
+}
+
+/** ③ 会话工具调用统计：遍历快照 nodes 收集 tool-result，展示统计徽标 + 展开面板。 */
+function ToolCallStats(props: SessionKit): React.ReactElement | null {
+  const { useSession } = props
+  const [open, setOpen] = React.useState(false)
+  const [hovered, setHovered] = React.useState(false)
+  const panelRef = React.useRef<HTMLDivElement | null>(null)
+
+  const snap = useSession<SnapshotLike>((s) => s as SnapshotLike)
+
+  // 收集工具调用记录（已完成）：nodes 里的 tool-result 节点
+  const stats = React.useMemo<CallStat[]>(() => {
+    const nodes = snap?.nodes ?? []
+    const out: CallStat[] = []
+    for (const n of nodes as NodeLike[]) {
+      if (n?.kind !== 'tool-result' || !n.call) continue
+      const dur = n.time != null && n.callTime != null ? n.time - n.callTime : null
+      out.push({
+        name: n.call.name ?? '?',
+        ok: !n.isError,
+        durationMs: dur != null && dur >= 0 ? dur : null,
+        time: n.time ?? 0,
+      })
+    }
+    return out
+  }, [snap])
+
+  const running = Boolean(snap?.running)
+  const total = stats.length
+  const ok = stats.filter((c) => c.ok).length
+  const fail = total - ok
+  const avgMs = total > 0
+    ? Math.round(stats.reduce((acc, c) => acc + (c.durationMs ?? 0), 0) / total)
+    : 0
+
+  // 工具分布：name -> 次数
+  const dist = React.useMemo<{ name: string, count: number }[]>(() => {
+    const m = new Map<string, number>()
+    for (const c of stats) m.set(c.name, (m.get(c.name) ?? 0) + 1)
+    return Array.from(m.entries()).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count)
+  }, [stats])
+
+  const recent = stats.slice(-6).reverse()
+
+  // 点击外部关闭面板
+  React.useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent): void => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  const fmtDur = (ms: number | null): string => {
+    if (ms == null) return '—'
+    if (ms < 1000) return `${ms}ms`
+    return `${(ms / 1000).toFixed(1)}s`
+  }
+
+  const badgeStyle = running ? statsBadgeRunning : (hovered ? statsBadgeHover : statsBadge)
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }} ref={panelRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={badgeStyle}
+        title={`工具调用统计：${total} 次`}
+      >
+        <span style={{ fontSize: 13 }}>🔧</span>
+        <span>{total}</span>
+      </button>
+      {open ? (
+        <div style={{
+          position: 'absolute',
+          top: 'calc(100% + 6px)',
+          right: 0,
+          zIndex: 1000,
+          width: 300,
+          background: 'var(--dsw-surface, #1e293b)',
+          border: '1px solid var(--dsw-border, rgba(148,163,184,0.35))',
+          borderRadius: 12,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+          padding: '12px 14px',
+          color: 'var(--dsw-text-primary, #e2e8f0)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <span style={{ fontWeight: 800, fontSize: 14 }}>工具调用统计</span>
+            {running ? <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 700 }}>🟢 运行中</span> : null}
+          </div>
+          {/* 总览数字 */}
+          <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+            <span style={overviewCell}>总数 {total}</span>
+            <span style={{ ...overviewCell, color: '#16a34a' }}>成功 {ok}</span>
+            <span style={{ ...overviewCell, color: fail > 0 ? '#dc2626' : '#64748b' }}>失败 {fail}</span>
+            <span style={overviewCell}>均耗 {fmtDur(avgMs)}</span>
+          </div>
+          {/* 工具分布 */}
+          {dist.length > 0 ? (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--dsw-text-secondary, #cbd5e1)', marginBottom: 6 }}>工具分布</div>
+              {dist.slice(0, 8).map((d) => {
+                const pct = Math.round((d.count / total) * 100)
+                return (
+                  <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                    <span style={{ fontSize: 12, width: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-text-secondary, #cbd5e1)' }}>{d.name}</span>
+                    <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'rgba(148,163,184,0.2)', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, #8b5cf6, #6366f1)', borderRadius: 3 }} />
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 700, width: 24, textAlign: 'right' }}>{d.count}</span>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--dsw-text-tertiary, #94a3b8)', marginBottom: 8 }}>本会话暂无工具调用</div>
+          )}
+          {/* 最近流水 */}
+          {recent.length > 0 ? (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--dsw-text-secondary, #cbd5e1)', marginBottom: 6 }}>最近调用</div>
+              {recent.map((c, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0', fontSize: 12 }}>
+                  <span style={{ color: c.ok ? '#16a34a' : '#dc2626', fontWeight: 800 }}>{c.ok ? '✓' : '✗'}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-text-secondary, #cbd5e1)' }}>{c.name}</span>
+                  <span style={{ color: 'var(--dsw-text-tertiary, #94a3b8)', fontVariantNumeric: 'tabular-nums' }}>{fmtDur(c.durationMs)}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+const overviewCell: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 700,
+  padding: '3px 8px',
+  borderRadius: 6,
+  background: 'rgba(148,163,184,0.12)',
+  color: 'var(--dsw-text-secondary, #cbd5e1)',
+}
+
 /* ---------- 插件主体 ---------- */
 
 export const inject = ['slots', 'locale']
@@ -404,4 +594,10 @@ export function apply(ctx: ClientContext): void {
       id: 'ui-enhance-open-editor',
       order: 6,
     }, OpenInEditorButton))
+  ctx.slots.inject('conversation.session.header.utilities', () =>
+    ctx.slots.register({
+      name: 'conversation.session.header.utilities',
+      id: 'ui-enhance-tool-stats',
+      order: 7,
+    }, ToolCallStats))
 }
