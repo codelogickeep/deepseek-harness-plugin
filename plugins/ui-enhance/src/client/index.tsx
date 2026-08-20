@@ -586,6 +586,7 @@ interface TreeNode {
 /** 右侧文件树面板（对齐左侧侧边栏的浅色融入风格）+ 右上角开关。 */
 function FileTreePanel(): React.ReactElement {
   const [open, setOpen] = React.useState(false)
+  const [width, setWidth] = React.useState(280)
   const [root, setRoot] = React.useState('')
   const [branch, setBranch] = React.useState<string | null>(null)
   const [rootNodes, setRootNodes] = React.useState<TreeNode[] | null>(null)
@@ -611,19 +612,40 @@ function FileTreePanel(): React.ReactElement {
     }
   }, [])
 
-  // 打开时让主内容区（centerCol）往左缩，右侧让出 280px 给文件树（与左侧栏对称，融为一体）
+  // 打开时让主内容区（centerCol）往左缩，右侧让出面板宽度给文件树（与左侧栏对称，融为一体）
   React.useEffect(() => {
     if (typeof document === 'undefined') return
     const col = document.querySelector<HTMLElement>('[class*="centerCol"]')
     if (!col) return
     if (open) {
-      col.style.marginRight = '280px'
-      col.style.transition = 'margin-right 0.2s ease'
+      col.style.marginRight = `${width}px`
+      col.style.transition = 'margin-right 0.15s ease'
     } else {
       col.style.marginRight = ''
     }
     return () => { col.style.marginRight = '' }
-  }, [open])
+  }, [open, width])
+
+  // 拖拽调整面板宽度（拖拽条在面板左缘）：往左拖变宽、往右拖变窄
+  const startDrag = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = width
+    const onMove = (ev: MouseEvent): void => {
+      const next = Math.min(520, Math.max(220, startW - (ev.clientX - startX)))
+      setWidth(next)
+    }
+    const onUp = (): void => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
 
   // 展开/收起目录
   const toggleDir = async (node: TreeNode): Promise<void> => {
@@ -722,17 +744,31 @@ function FileTreePanel(): React.ReactElement {
 
   const nodes = rootNodes ?? []
 
-  // 头部打开开关按钮（浅色 chip）
+  // 头部打开开关按钮（浅色 chip），图标：左竖三点 + 右三横线
   const toggleBtnStyle: React.CSSProperties = {
     ...chipBase,
     cursor: 'pointer',
     background: open ? 'rgb(229, 231, 235)' : 'rgb(243, 244, 246)',
     color: '#0f1115',
     border: '1px solid rgb(209, 213, 219)',
-    padding: '2px 9px',
+    padding: '2px 8px',
     borderRadius: 8,
     fontSize: 13,
+    lineHeight: 0,
   }
+
+  const toggleIcon = (
+    <svg viewBox="0 0 28 18" width="20" height="13" style={{ display: 'block' }}>
+      {/* 左：竖三点 */}
+      <circle cx="4" cy="3" r="1.6" fill="currentColor" />
+      <circle cx="4" cy="9" r="1.6" fill="currentColor" />
+      <circle cx="4" cy="15" r="1.6" fill="currentColor" />
+      {/* 右：三横线 */}
+      <line x1="10" y1="3" x2="24" y2="3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="10" y1="9" x2="24" y2="9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="10" y1="15" x2="24" y2="15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
 
   return (
     <>
@@ -743,13 +779,13 @@ function FileTreePanel(): React.ReactElement {
         title={open ? '关闭文件树' : '项目文件树'}
         aria-expanded={open}
       >
-        <span style={{ fontSize: 13 }}>🗂</span>
+        {toggleIcon}
       </button>
       {open ? (
         <div style={{
           position: 'fixed',
           top: 0, right: 0, bottom: 0,
-          width: 280,
+          width,
           zIndex: 2000,
           background: 'rgb(249, 250, 251)',
           borderLeft: '1px solid rgb(229, 231, 235)',
@@ -757,23 +793,44 @@ function FileTreePanel(): React.ReactElement {
           color: '#0f1115',
           fontFamily: 'inherit',
         }}>
-          {/* 头 */}
+          {/* 拖拽条：面板左缘 6px */}
+          <div
+            onMouseDown={startDrag}
+            title="拖拽调整宽度"
+            style={{
+              position: 'absolute', left: -3, top: 0, bottom: 0, width: 6,
+              cursor: 'col-resize', zIndex: 3,
+            }}
+          />
+          {/* 头：76px 高、两行式，分隔线对齐中间区域（y 76） */}
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '10px 14px', borderBottom: '1px solid rgb(229, 231, 235)',
+            display: 'flex', flexDirection: 'column',
+            padding: '0 14px',
+            borderBottom: '1px solid rgb(229, 231, 235)',
+            height: 76, boxSizing: 'border-box',
           }}>
-            <span style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {root ? root.split('/').pop() || root : '工作区'}
-            </span>
-            {branch ? (
-              <span style={{
-                fontSize: 11, fontWeight: 700, color: '#b45309', background: 'rgb(254, 243, 199)',
-                padding: '1px 7px', borderRadius: 999, border: '1px solid rgb(252, 211, 77)',
-              }}>⎇ {branch}</span>
-            ) : null}
-            <span style={{ flex: 1 }} />
-            <button type="button" onClick={refresh} style={iconBtn} title="刷新">⟳</button>
-            <button type="button" onClick={() => setOpen(false)} style={iconBtn} title="关闭">✕</button>
+            {/* 第一行：项目名 + 分支（y 0-38） */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, height: 38, flexShrink: 0,
+            }}>
+              <span style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {root ? root.split('/').pop() || root : '工作区'}
+              </span>
+              {branch ? (
+                <span style={{
+                  fontSize: 11, fontWeight: 700, color: '#b45309', background: 'rgb(254, 243, 199)',
+                  padding: '1px 7px', borderRadius: 999, border: '1px solid rgb(252, 211, 77)',
+                }}>⎇ {branch}</span>
+              ) : null}
+            </div>
+            {/* 第二行：操作按钮（y 38-76），与中间 tabs 行同高 */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, height: 38, flexShrink: 0,
+              justifyContent: 'flex-end',
+            }}>
+              <button type="button" onClick={refresh} style={iconBtn} title="刷新">⟳</button>
+              <button type="button" onClick={() => setOpen(false)} style={iconBtn} title="关闭">✕</button>
+            </div>
           </div>
           {/* 树 */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 6px' }}>
@@ -789,7 +846,7 @@ function FileTreePanel(): React.ReactElement {
             borderTop: '1px solid rgb(229, 231, 235)', padding: '6px 14px',
             fontSize: 11, color: '#9aa1ab',
           }}>
-            双击文件在编辑器中打开 · git 徽标示状态
+            拖拽左边框调宽度 · 双击文件打开
           </div>
         </div>
       ) : null}
@@ -840,7 +897,7 @@ export function apply(ctx: ClientContext): void {
     ctx.slots.register({
       name: 'conversation.session.header.utilities',
       id: 'ui-enhance-file-tree',
-      order: 90,
+      order: 110,
     }, FileTreePanel))
   ctx.slots.inject('conversation.session.header.utilities', () =>
     ctx.slots.register({
