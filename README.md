@@ -1,10 +1,3 @@
----
-title: deepseek-harness-plugin — DSH 插件集合与安装脚手架
-description: DeepSeek Harness (DSH) 插件集合仓库：钉钉桥接器、MiniMax 网页搜索等插件统一沉淀，并提供 DSH 插件开发/安装的脚手架。
-tags: [dsh, deepseek-harness, plugins, scaffold, dingtalk, minimax, ai-agent]
-date: 2026-08-17
-status: active
----
 # deepseek-harness-plugin
 
 **DSH（DeepSeek Harness）插件集合仓库 + 安装脚手架**：把你有用的 DSH 插件统一沉淀在这里，并提供开发/安装插件的脚手架。
