@@ -611,6 +611,20 @@ function FileTreePanel(): React.ReactElement {
     }
   }, [])
 
+  // 打开时让主内容区（centerCol）往左缩，右侧让出 280px 给文件树（与左侧栏对称，融为一体）
+  React.useEffect(() => {
+    if (typeof document === 'undefined') return
+    const col = document.querySelector<HTMLElement>('[class*="centerCol"]')
+    if (!col) return
+    if (open) {
+      col.style.marginRight = '280px'
+      col.style.transition = 'margin-right 0.2s ease'
+    } else {
+      col.style.marginRight = ''
+    }
+    return () => { col.style.marginRight = '' }
+  }, [open])
+
   // 展开/收起目录
   const toggleDir = async (node: TreeNode): Promise<void> => {
     if (node.expanded) {
