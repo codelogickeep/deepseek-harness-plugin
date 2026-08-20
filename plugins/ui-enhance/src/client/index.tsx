@@ -101,15 +101,16 @@ const ideBtn: React.CSSProperties = {
   ...chipBase,
   cursor: 'pointer',
   color: '#ffffff',
-  background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
-  border: '1px solid #1d4ed8',
-  boxShadow: '0 1px 4px rgba(37,99,235,0.35)',
-  transition: 'filter 0.15s ease, transform 0.1s ease',
+  background: 'linear-gradient(135deg, rgba(37,99,235,0.85) 0%, rgba(29,78,216,0.85) 100%)',
+  border: 'none',
+  boxShadow: 'none',
+  transition: 'filter 0.15s ease, transform 0.1s ease, background 0.15s ease',
   fontFamily: 'inherit',
 }
 const ideBtnHover: React.CSSProperties = {
   ...ideBtn,
-  filter: 'brightness(1.15)',
+  background: 'linear-gradient(135deg, rgba(37,99,235,0.95) 0%, rgba(29,78,216,0.95) 100%)',
+  filter: 'brightness(1.1)',
 }
 const ideBtnActive: React.CSSProperties = {
   ...ideBtn,
@@ -118,20 +119,50 @@ const ideBtnActive: React.CSSProperties = {
 }
 const ideBtnBusy: React.CSSProperties = {
   ...ideBtn,
-  background: 'linear-gradient(135deg, #64748b 0%, #475569 100%)',
-  border: '1px solid #475569',
-  boxShadow: 'none',
+  background: 'linear-gradient(135deg, rgba(100,116,139,0.75) 0%, rgba(71,85,105,0.75) 100%)',
   cursor: 'wait',
 }
 const ideBtnDone: React.CSSProperties = {
   ...ideBtn,
-  background: 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)',
-  border: '1px solid #15803d',
+  background: 'linear-gradient(135deg, rgba(22,163,74,0.85) 0%, rgba(21,128,61,0.85) 100%)',
 }
 const ideBtnErr: React.CSSProperties = {
   ...ideBtn,
-  background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)',
-  border: '1px solid #b91c1c',
+  background: 'linear-gradient(135deg, rgba(220,38,38,0.8) 0%, rgba(185,28,28,0.8) 100%)',
+}
+
+/** 连体按钮组：统一圆角/边框/阴影，内部按钮裁剪成一体。 */
+const ideGroup: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'stretch',
+  borderRadius: 10,
+  overflow: 'hidden',
+  border: '1px solid rgba(29,78,216,0.7)',
+  background: 'linear-gradient(135deg, rgba(37,99,235,0.85) 0%, rgba(29,78,216,0.85) 100%)',
+  boxShadow: '0 1px 4px rgba(37,99,235,0.3)',
+}
+const ideGroupHover: React.CSSProperties = {
+  ...ideGroup,
+  background: 'linear-gradient(135deg, rgba(37,99,235,0.95) 0%, rgba(29,78,216,0.95) 100%)',
+  boxShadow: '0 1px 6px rgba(37,99,235,0.4)',
+}
+/** ▾ 下拉分区：比主按钮颜色略淡，左侧细分隔线。 */
+const ideCaretBtn: React.CSSProperties = {
+  ...chipBase,
+  cursor: 'pointer',
+  color: 'rgba(255,255,255,0.92)',
+  background: 'rgba(255,255,255,0.10)',
+  border: 'none',
+  borderLeft: '1px solid rgba(255,255,255,0.35)',
+  padding: '3px 7px',
+  width: 28,
+  justifyContent: 'center',
+  fontFamily: 'inherit',
+  fontSize: 12,
+}
+const ideCaretBtnHover: React.CSSProperties = {
+  ...ideCaretBtn,
+  background: 'rgba(255,255,255,0.20)',
 }
 
 /* ---------- 组件 ---------- */
@@ -186,7 +217,7 @@ const IDE_OPTIONS = [
   { id: 'vscode', label: 'VS Code', cmd: 'code' },
   { id: 'cursor', label: 'Cursor', cmd: 'cursor' },
   { id: 'windsurf', label: 'Windsurf', cmd: 'windsurf' },
-  { id: 'insiders', label: 'VS Code Insiders', cmd: 'code-insiders' },
+  { id: 'trae', label: 'Trae', cmd: 'trae' },
 ]
 
 /** 选择菜单（点击 IDE 名切换）+ 打开按钮。 */
@@ -196,17 +227,36 @@ function OpenInEditorButton(): React.ReactElement {
   const [pressed, setPressed] = React.useState(false)
   const [menuOpen, setMenuOpen] = React.useState(false)
   const [editor, setEditor] = React.useState<string>('vscode')
+  // 本机已安装的 IDE id 列表（由 Node 半身检测）；空=尚未加载
+  const [available, setAvailable] = React.useState<string[]>([...IDE_OPTIONS.map((o) => o.id)])
   const menuRef = React.useRef<HTMLDivElement | null>(null)
 
-  // 从 localStorage 恢复上次选用 IDE
+  // 拉取本机可用 IDE 列表（Node 半身 /api/ui-enhance/editors 检测命令是否存在）
+  React.useEffect(() => {
+    let alive = true
+    fetch('/api/ui-enhance/editors')
+      .then((r) => (r.ok ? r.json() : { editors: [] }))
+      .then((d: { editors?: string[] }) => {
+        if (!alive) return
+        const list = Array.isArray(d.editors) && d.editors.length > 0 ? d.editors : IDE_OPTIONS.map((o) => o.id)
+        setAvailable(list)
+      })
+      .catch(() => { /* 保持默认全量 */ })
+    return () => { alive = false }
+  }, [])
+
+  // 从 localStorage 恢复上次选用 IDE（并在可用列表中校验）
   React.useEffect(() => {
     try {
       const saved = localStorage.getItem('ui-enhance:ide')
-      if (saved) setEditor(saved)
+      if (saved && available.includes(saved)) setEditor(saved)
     } catch { /* ignore */ }
-  }, [])
+  }, [available])
 
-  const current = IDE_OPTIONS.find((o) => o.id === editor) ?? IDE_OPTIONS[0]
+  const availableOptions = IDE_OPTIONS.filter((o) => available.includes(o.id))
+  // 兜底：至少保留 VS Code
+  const effectiveOptions = availableOptions.length > 0 ? availableOptions : IDE_OPTIONS.filter((o) => o.id === 'vscode')
+  const current = effectiveOptions.find((o) => o.id === editor) ?? effectiveOptions[0]
 
   const launch = async (): Promise<void> => {
     if (state === 'busy') return
@@ -247,35 +297,33 @@ function OpenInEditorButton(): React.ReactElement {
 
   return (
     <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }} ref={menuRef}>
-      <button
-        type="button"
-        onClick={launch}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onMouseDown={() => setPressed(true)}
-        onMouseUp={() => setPressed(false)}
-        style={btnStyle}
-        title={`在 ${current.label} 中打开当前工作区`}
-      >
-        <span style={{ fontSize: 14 }}>⧉</span>
-        <span>{label}</span>
-      </button>
-      <button
-        type="button"
-        aria-label="选择 IDE"
-        onClick={() => setMenuOpen((v) => !v)}
-        style={{
-          ...ideBtn,
-          marginLeft: 2,
-          padding: '3px 6px',
-          borderRadius: 8,
-          width: 26,
-          justifyContent: 'center',
-        }}
-        title="选择要打开的编辑器"
-      >
-        <span style={{ fontSize: 12 }}>▾</span>
-      </button>
+      {/* 连体按钮组：主按钮 + 下拉（整体一个，下拉略淡） */}
+      <div style={hovered || menuOpen ? ideGroupHover : ideGroup}>
+        <button
+          type="button"
+          onClick={launch}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          onMouseDown={() => setPressed(true)}
+          onMouseUp={() => setPressed(false)}
+          style={btnStyle}
+          title={`在 ${current.label} 中打开当前工作区`}
+        >
+          <span style={{ fontSize: 14 }}>⧉</span>
+          <span>{label}</span>
+        </button>
+        <button
+          type="button"
+          aria-label="选择 IDE"
+          onClick={() => setMenuOpen((v) => !v)}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          style={hovered ? ideCaretBtnHover : ideCaretBtn}
+          title="选择要打开的编辑器"
+        >
+          <span style={{ fontSize: 12 }}>▾</span>
+        </button>
+      </div>
       {menuOpen ? (
         <div style={{
           position: 'absolute',
@@ -289,7 +337,7 @@ function OpenInEditorButton(): React.ReactElement {
           padding: 4,
           minWidth: 160,
         }}>
-          {IDE_OPTIONS.map((o) => (
+          {effectiveOptions.map((o) => (
             <button
               key={o.id}
               type="button"

@@ -8,7 +8,7 @@
  *   └─ 其余主体能力在 client 半身（src/client/），Node 侧保持轻量。
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -66,7 +66,19 @@ const EDITOR_COMMANDS: Record<string, string> = {
   vscode: 'code',
   cursor: 'cursor',
   windsurf: 'windsurf',
-  insiders: 'code-insiders',
+  trae: 'trae',
+}
+
+/** 检测本机已安装的 IDE（命令存在于 PATH）。返回可用 editor id 列表（按 IDE_OPTIONS 顺序）。 */
+function listAvailableEditors(): string[] {
+  const ORDER = ['vscode', 'cursor', 'windsurf', 'trae']
+  const available: string[] = []
+  for (const id of ORDER) {
+    const cmd = EDITOR_COMMANDS[id]
+    const r = spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' })
+    if (r.status === 0) available.push(id)
+  }
+  return available
 }
 
 /** 打开给定编辑器打开工作区目录。editor 为空/未知时回退 vscode。 */
@@ -102,6 +114,12 @@ export function apply(ctx: Context): void {
 async function handle(ctx: Context, req: Req, res: Res): Promise<void> {
   const url = (req.url ?? '').split('?')[0]
   const suffix = url.slice(ROUTE_PREFIX.length)
+
+  if (req.method === 'GET' && suffix === '/editors') {
+    const editors = listAvailableEditors()
+    json(res, 200, { editors })
+    return
+  }
 
   if (req.method === 'POST' && suffix === '/open-in-editor') {
     const body = await readBody(req)
