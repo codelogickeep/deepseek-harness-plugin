@@ -840,11 +840,10 @@ function FileTreePanel(): React.ReactElement {
             height: 74, boxSizing: 'border-box',
             position: 'relative',
           }}>
-            {/* 路径区：当前路径（以 . 开头），可换行最多三行 */}
+            {/* 路径区：当前路径（以 ./ 开头），可换行最多三行 */}
             <div style={{
               display: 'flex', alignItems: 'flex-start', gap: 6,
               minHeight: 30, flexShrink: 0, paddingTop: 4,
-              paddingRight: 26,
             }}>
               <span
                 title={selPath === '/' ? '项目根目录' : '回到项目根目录'}
@@ -863,7 +862,7 @@ function FileTreePanel(): React.ReactElement {
                   lineHeight: 1.45,
                 }}
               >
-                {selPath === '/' ? '.' : `.${selPath}`}
+                {'.' + selPath}
               </span>
             </div>
             {/* 复制按钮：绝对定位于头部右下角，固定位置不随路径换行而移动 */}
@@ -873,7 +872,7 @@ function FileTreePanel(): React.ReactElement {
             }}>
               <button
                 type="button"
-                onClick={() => void copyPath(selPath === '/' ? '.' : `.${selPath}`)}
+                onClick={() => void copyPath('.' + selPath)}
                 style={iconBtn}
                 title="复制路径"
               >
