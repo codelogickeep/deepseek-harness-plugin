@@ -751,22 +751,26 @@ function FileTreePanel(): React.ReactElement {
     background: open ? 'rgb(229, 231, 235)' : 'rgb(243, 244, 246)',
     color: '#0f1115',
     border: '1px solid rgb(209, 213, 219)',
+    // svg 高 22 + border 2 + padding 2*2 = 28，与打开 IDE/状态按钮等高（28px）
     padding: '2px 8px',
     borderRadius: 8,
     fontSize: 13,
     lineHeight: 0,
+    display: 'inline-flex',
+    alignItems: 'center',
   }
 
+  // svg 高 22（与 IDE/状态按钮文字行高一致）
   const toggleIcon = (
-    <svg viewBox="0 0 28 18" width="20" height="13" style={{ display: 'block' }}>
+    <svg viewBox="0 0 28 22" width="22" height="22" style={{ display: 'block' }}>
       {/* 左：竖三点 */}
-      <circle cx="4" cy="3" r="1.6" fill="currentColor" />
-      <circle cx="4" cy="9" r="1.6" fill="currentColor" />
-      <circle cx="4" cy="15" r="1.6" fill="currentColor" />
+      <circle cx="4" cy="3" r="1.8" fill="currentColor" />
+      <circle cx="4" cy="11" r="1.8" fill="currentColor" />
+      <circle cx="4" cy="19" r="1.8" fill="currentColor" />
       {/* 右：三横线 */}
-      <line x1="10" y1="3" x2="24" y2="3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <line x1="10" y1="9" x2="24" y2="9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <line x1="10" y1="15" x2="24" y2="15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="10" y1="3" x2="25" y2="3" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <line x1="10" y1="11" x2="25" y2="11" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <line x1="10" y1="19" x2="25" y2="19" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
     </svg>
   )
 
@@ -802,16 +806,16 @@ function FileTreePanel(): React.ReactElement {
               cursor: 'col-resize', zIndex: 3,
             }}
           />
-          {/* 头：76px 高、两行式，分隔线对齐中间区域（y 76） */}
+          {/* 头：74px 高、两行式，分隔线对齐中间区域（y 74，即中间 76 上移 2px） */}
           <div style={{
             display: 'flex', flexDirection: 'column',
             padding: '0 14px',
             borderBottom: '1px solid rgb(229, 231, 235)',
-            height: 76, boxSizing: 'border-box',
+            height: 74, boxSizing: 'border-box',
           }}>
-            {/* 第一行：项目名 + 分支（y 0-38） */}
+            {/* 第一行：项目名 + 分支（y 0-37） */}
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, height: 38, flexShrink: 0,
+              display: 'flex', alignItems: 'center', gap: 8, height: 37, flexShrink: 0,
             }}>
               <span style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {root ? root.split('/').pop() || root : '工作区'}
@@ -823,9 +827,9 @@ function FileTreePanel(): React.ReactElement {
                 }}>⎇ {branch}</span>
               ) : null}
             </div>
-            {/* 第二行：操作按钮（y 38-76），与中间 tabs 行同高 */}
+            {/* 第二行：操作按钮（y 37-74），与中间 tabs 行同高 */}
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, height: 38, flexShrink: 0,
+              display: 'flex', alignItems: 'center', gap: 8, height: 37, flexShrink: 0,
               justifyContent: 'flex-end',
             }}>
               <button type="button" onClick={refresh} style={iconBtn} title="刷新">⟳</button>
