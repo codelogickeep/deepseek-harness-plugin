@@ -83,21 +83,23 @@ function listAvailableEditors(): string[] {
   return available
 }
 
-/** 打开给定编辑器打开工作区目录。editor 为空/未知时回退 vscode。 */
-function openInEditor(workspacePath: string, editor = 'vscode'): Promise<{ ok: boolean, message: string }> {
+/** 打开给定编辑器打开工作区目录或具体文件。editor 为空/未知时回退 vscode。 */
+function openInEditor(workspacePath: string, editor = 'vscode', fileRel?: string): Promise<{ ok: boolean, message: string }> {
   if (!workspacePath || typeof workspacePath !== 'string') {
     return Promise.resolve({ ok: false, message: 'missing workspace path' })
   }
   const cmd = EDITOR_COMMANDS[editor] ?? 'code'
+  // 打开具体文件：目标为相对路径（限定在工作区内），传给 IDE 打开单文件
+  const target = fileRel ? resolve(workspacePath, fileRel) : workspacePath
   return new Promise((resolve) => {
-    const child = spawn(cmd, [workspacePath], {
+    const child = spawn(cmd, [target], {
       stdio: 'ignore',
       detached: true,
     })
     child.on('error', (err) => resolve({ ok: false, message: `${cmd} launch failed: ${err.message}` }))
     child.on('spawn', () => {
       child.unref()
-      resolve({ ok: true, message: `${cmd} opened ${workspacePath}` })
+      resolve({ ok: true, message: `${cmd} opened ${target}` })
     })
   })
 }
@@ -225,7 +227,8 @@ async function handle(ctx: Context, req: Req, res: Res): Promise<void> {
       }
     }
     const editor = String(body.editor ?? 'vscode')
-    const result = await openInEditor(workspace, editor)
+    const fileRel = typeof body.file === 'string' && body.file ? body.file : undefined
+    const result = await openInEditor(workspace, editor, fileRel)
     json(res, result.ok ? 200 : 400, result)
     return
   }

@@ -583,6 +583,7 @@ interface TreeNode {
 }
 
 /** 右侧文件树抽屉 + 右上角开关。 */
+/** 右侧文件树面板（对齐左侧侧边栏的浅色融入风格）+ 右上角开关。 */
 function FileTreePanel(): React.ReactElement {
   const [open, setOpen] = React.useState(false)
   const [root, setRoot] = React.useState('')
@@ -642,45 +643,61 @@ function FileTreePanel(): React.ReactElement {
 
   const refresh = (): void => { void loadRoot() }
 
-  /** 递归渲染目录。 */
+  /** 双击文件 → 在当前 IDE 中打开该文件（Node 半身支持 file 参数）。 */
+  const openFile = async (filePath: string): Promise<void> => {
+    try {
+      await fetch('/api/ui-enhance/open-in-editor', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ file: filePath }),
+      })
+    } catch { /* ignore */ }
+  }
+
+  /** 递归渲染目录（浅色，对齐左侧栏）。 */
   const renderLevel = (nodes: TreeNode[], depth: number): React.ReactElement[] => {
     return nodes.map((node) => {
       const entry = node.entry
       const badge = gitBadge(entry.git)
-      const indent = { paddingLeft: 8 + depth * 14 }
+      const indent = { paddingLeft: 10 + depth * 16 }
+      const isDir = entry.type === 'dir'
       return (
         <React.Fragment key={entry.path}>
           <div
             role="button"
             tabIndex={0}
-            onClick={() => { if (entry.type === 'dir') void toggleDir(node) }}
+            onClick={() => { if (isDir) void toggleDir(node) }}
+            onDoubleClick={() => { if (!isDir) void openFile(entry.path) }}
+            title={isDir ? entry.path : `双击在编辑器中打开 ${entry.path}`}
             style={{
               ...indent,
-              display: 'flex', alignItems: 'center', gap: 6,
-              paddingTop: 2, paddingBottom: 2, paddingRight: 8,
-              cursor: entry.type === 'dir' ? 'pointer' : 'default',
-              borderRadius: 6, fontSize: 13,
-              color: 'var(--dsw-text-secondary, #cbd5e1)',
+              display: 'flex', alignItems: 'center', gap: 7,
+              paddingTop: 4, paddingBottom: 4, paddingRight: 10,
+              cursor: isDir ? 'pointer' : 'default',
+              borderRadius: 8,
+              fontSize: 13,
+              color: '#0f1115',
               whiteSpace: 'nowrap',
             }}
-            title={entry.path}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(0,0,0,0.05)' }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'transparent' }}
           >
-            <span style={{ fontSize: 11, width: 14, color: '#94a3b8' }}>
-              {entry.type === 'dir' ? (node.expanded ? '▾' : '▸') : ''}
+            <span style={{ fontSize: 10, width: 12, color: '#9aa1ab', flexShrink: 0 }}>
+              {isDir ? (node.expanded ? '▾' : '▸') : ''}
             </span>
-            <span style={{ fontSize: 13 }}>{entry.type === 'dir' ? '📁' : '📄'}</span>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.name}</span>
+            <span style={{ fontSize: 13, flexShrink: 0 }}>{isDir ? '📁' : '📄'}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{entry.name}</span>
             {badge ? (
               <span style={{
                 fontSize: 10, fontWeight: 800, padding: '0 5px', borderRadius: 4,
-                color: badge.color, background: badge.bg, marginLeft: 'auto',
+                color: badge.color, background: badge.bg, flexShrink: 0,
               }}>{badge.label}</span>
             ) : null}
           </div>
-          {entry.type === 'dir' && node.expanded ? (
+          {isDir && node.expanded ? (
             <div>
-              {node.loading ? <div style={{ ...indent, fontSize: 12, color: '#64748b' }}>加载中…</div> : null}
-              {node.error ? <div style={{ ...indent, fontSize: 12, color: '#ef4444' }}>{node.error}</div> : null}
+              {node.loading ? <div style={{ ...indent, fontSize: 12, color: '#6b7280', paddingLeft: 26 }}>加载中…</div> : null}
+              {node.error ? <div style={{ ...indent, fontSize: 12, color: '#dc2626', paddingLeft: 26 }}>{node.error}</div> : null}
               {node.loaded && !node.loading ? renderLevel(node.children, depth + 1) : null}
             </div>
           ) : null}
@@ -691,14 +708,14 @@ function FileTreePanel(): React.ReactElement {
 
   const nodes = rootNodes ?? []
 
-  // 头部打开开关按钮
+  // 头部打开开关按钮（浅色 chip）
   const toggleBtnStyle: React.CSSProperties = {
     ...chipBase,
     cursor: 'pointer',
-    background: open ? 'rgba(139,92,246,0.22)' : 'rgba(139,92,246,0.10)',
-    color: 'var(--dsw-text-primary, #f1f5f9)',
-    border: open ? '1px solid rgba(139,92,246,0.55)' : '1px solid rgba(139,92,246,0.3)',
-    padding: '3px 9px',
+    background: open ? 'rgb(229, 231, 235)' : 'rgb(243, 244, 246)',
+    color: '#0f1115',
+    border: '1px solid rgb(209, 213, 219)',
+    padding: '2px 9px',
     borderRadius: 8,
     fontSize: 13,
   }
@@ -718,27 +735,26 @@ function FileTreePanel(): React.ReactElement {
         <div style={{
           position: 'fixed',
           top: 0, right: 0, bottom: 0,
-          width: 320,
+          width: 280,
           zIndex: 2000,
-          background: 'var(--dsw-surface, #0f172a)',
-          borderLeft: '1px solid var(--dsw-border, rgba(148,163,184,0.3))',
-          boxShadow: '-8px 0 24px rgba(0,0,0,0.25)',
+          background: 'rgb(249, 250, 251)',
+          borderLeft: '1px solid rgb(229, 231, 235)',
           display: 'flex', flexDirection: 'column',
-          color: 'var(--dsw-text-primary, #e2e8f0)',
+          color: '#0f1115',
           fontFamily: 'inherit',
         }}>
           {/* 头 */}
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,
-            padding: '10px 14px', borderBottom: '1px solid var(--dsw-border, rgba(148,163,184,0.2))',
+            padding: '10px 14px', borderBottom: '1px solid rgb(229, 231, 235)',
           }}>
-            <span style={{ fontWeight: 800, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {root ? root.split('/').pop() || root : '工作区'}
             </span>
             {branch ? (
               <span style={{
-                fontSize: 11, fontWeight: 700, color: '#fbbf24', background: 'rgba(245,158,11,0.15)',
-                padding: '1px 7px', borderRadius: 999, border: '1px solid rgba(245,158,11,0.4)',
+                fontSize: 11, fontWeight: 700, color: '#b45309', background: 'rgb(254, 243, 199)',
+                padding: '1px 7px', borderRadius: 999, border: '1px solid rgb(252, 211, 77)',
               }}>⎇ {branch}</span>
             ) : null}
             <span style={{ flex: 1 }} />
@@ -747,12 +763,19 @@ function FileTreePanel(): React.ReactElement {
           </div>
           {/* 树 */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 6px' }}>
-            {loadingRoot ? <div style={{ fontSize: 12, color: '#64748b', padding: 8 }}>加载中…</div> : null}
-            {err ? <div style={{ fontSize: 12, color: '#ef4444', padding: 8 }}>{err}</div> : null}
+            {loadingRoot ? <div style={{ fontSize: 12, color: '#6b7280', padding: 8 }}>加载中…</div> : null}
+            {err ? <div style={{ fontSize: 12, color: '#dc2626', padding: 8 }}>{err}</div> : null}
             {!loadingRoot && !err && nodes.length === 0 ? (
-              <div style={{ fontSize: 12, color: '#64748b', padding: 8 }}>空工作区或无文件</div>
+              <div style={{ fontSize: 12, color: '#6b7280', padding: 8 }}>空工作区或无文件</div>
             ) : null}
             {!loadingRoot && !err ? renderLevel(nodes, 0) : null}
+          </div>
+          {/* 底栏提示 */}
+          <div style={{
+            borderTop: '1px solid rgb(229, 231, 235)', padding: '6px 14px',
+            fontSize: 11, color: '#9aa1ab',
+          }}>
+            双击文件在编辑器中打开 · git 徽标示状态
           </div>
         </div>
       ) : null}
@@ -761,9 +784,10 @@ function FileTreePanel(): React.ReactElement {
 }
 
 const iconBtn: React.CSSProperties = {
-  border: 'none', background: 'transparent', color: 'var(--dsw-text-secondary, #cbd5e1)',
+  border: 'none', background: 'transparent', color: '#6b7280',
   cursor: 'pointer', fontSize: 14, padding: '2px 5px', borderRadius: 5,
 }
+
 
 /* ---------- 插件主体 ---------- */
 
