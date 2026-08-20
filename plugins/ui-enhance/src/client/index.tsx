@@ -841,17 +841,26 @@ function FileTreePanel(): React.ReactElement {
             borderBottom: '1px solid rgb(229, 231, 235)',
             height: 74, boxSizing: 'border-box',
           }}>
-            {/* 第一行：当前路径（相对项目根，默认 '/'）+ 复制按钮 */}
+            {/* 第一行：当前路径（相对项目根，默认 '/'），可换行最多两行 + 复制按钮 */}
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 6, height: 37, flexShrink: 0,
+              display: 'flex', alignItems: 'flex-start', gap: 6,
+              minHeight: 30, flexShrink: 0, paddingTop: 4,
             }}>
               <span
                 title={selPath === '/' ? '项目根目录' : '回到项目根目录'}
                 onClick={() => { setSelPath('/') }}
                 style={{
                   fontWeight: 400, fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
-                  color: '#0f1115', cursor: 'pointer',
+                  flex: 1, color: '#0f1115', cursor: 'pointer',
+                  minWidth: 0,
+                  // 最多两行，超出省略号（…）
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical',
+                  whiteSpace: 'normal',
+                  overflow: 'hidden',
+                  overflowWrap: 'anywhere',
+                  lineHeight: 1.45,
                 }}
               >
                 {selPath}
@@ -865,10 +874,10 @@ function FileTreePanel(): React.ReactElement {
                 {copied ? '✓' : '⧉'}
               </button>
             </div>
-            {/* 第二行：操作按钮（y 37-74），与中间 tabs 行同高 */}
+            {/* 第二行：操作按钮，与中间 tabs 行同高（第一行两行路径时自动收缩） */}
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, height: 37, flexShrink: 0,
-              justifyContent: 'flex-end',
+              display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+              justifyContent: 'flex-end', minHeight: 22,
             }}>
               <button type="button" onClick={refresh} style={refreshBtn} title="刷新">⟳</button>
             </div>
