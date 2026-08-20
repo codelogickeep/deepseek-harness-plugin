@@ -232,7 +232,10 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 ### 一键安装（插件 + preset）
 
 ```bash
-# 只装 DSH 宿主插件（MiniMax 搜索、cron-scheduler）
+# 新增/修改宿主插件后、重启 DSH 前，先跑加载期自检（防"改完 DSH 起不来"）
+npm run check:plugin -- plugins/browser-reader/browser-reader.mjs
+
+# 只装 DSH 宿主插件（MiniMax 搜索、cron-scheduler、browser-reader）
 npm run install:plugins
 
 # 只装「pro 指挥、flash 执行」agent preset（渲染 flash provider/model 后安装）
