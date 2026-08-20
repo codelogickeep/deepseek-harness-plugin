@@ -16,6 +16,7 @@ status: active
 | **钉钉桥接器** (dsh-dingtalk-bridge) | 在钉钉里直接和 DSH Agent 对话，含会话管理控制台、**主动推送**（定时提醒→钉钉） | 独立进程 ↔ DSH `/api` |
 | **MiniMax 网页搜索** (minimax-search) | 把 MiniMax 搜索注册为 DSH 宿主 Web 搜索 provider，`web_search` 工具直接可用 | DSH 宿主插件 (`cordis.patch.yml`) |
 | **自研定时调度** (cron-scheduler) | 标准 **5 字段 cron 表达式**定时任务（`0 10 * * *`），配置文件驱动、跨重启防重复，到点唤醒指定 Agent 会话 | DSH 宿主插件 (`cordis.patch.yml`) |
+| **浏览器阅读** (browser-reader) | Playwright 驱动真实 Chromium/Edge，`web_read` 系列工具确定性读 JS 渲染页面（含 console/截图/继续读/关闭） | DSH 宿主插件 (`cordis.patch.yml` + profile 依赖 playwright-core) |
 | **flash-worker**（pro 指挥、flash 执行） | 给主 agent 加 `flash_agent` 工具，把具体编码任务委派给 flash 模型子 agent，形成 orchestrator-worker 两级协同 | Agent preset（脚手架渲染安装） |
 
 > 另启用 DSH **官方** `dsh-schedule`（`schedule_create`/`list`/`delete`，after/at/every）
@@ -33,7 +34,9 @@ status: active
 | 2 | MiniMax 搜索 | [docs/MINIMAX-SEARCH.md](docs/MINIMAX-SEARCH.md) 一键接入 |
 | 3 | 自研定时调度 | [插件 3](#插件-3自研定时调度-cron-scheduler) · 事故复盘 [docs/CRON-SCHEDULER-INCIDENT.md](docs/CRON-SCHEDULER-INCIDENT.md) |
 | 4 | flash-worker（pro 指挥、flash 执行） | [docs/FLASH-WORKER.md](docs/FLASH-WORKER.md) 原理/安装/使用 |
+| 5 | 浏览器阅读 (browser-reader) | [插件 5](#插件-5浏览器阅读-browser-reader) · 文档 [docs/BROWSER-READER.md](docs/BROWSER-READER.md) |
 | — | 脚手架/方法论 | [docs/PLUGIN-ECOSYSTEM.md](docs/PLUGIN-ECOSYSTEM.md) · [docs/DSH-NOTES.md](docs/DSH-NOTES.md) |
+| — | 插件容错研究 | [docs/PLUGIN-RESILIENCE.md](docs/PLUGIN-RESILIENCE.md)（为什么第三方插件能搞崩 DSH + 自检防线）|
 
 ---
 
@@ -173,6 +176,32 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 
 ---
 
+## 插件 5：浏览器阅读（browser-reader）
+
+给 DSH Agent 「真浏览器阅读」能力：Playwright 驱动本机 Chromium/Edge，
+**确定性读 JS 渲染页面**（DSH 内置 `web_fetch` 只拿 HTML，读不了动态内容）。
+
+工具：`web_read`（打开+读渲染正文）/ `web_read_continue`（懒加载继续读）/
+`web_read_console`（页面健康度）/ `web_read_screenshot`（给人复核）/ `web_read_close`。
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- insert:
+    - id: browser-reader
+      name: ./plugins/browser-reader/browser-reader.mjs
+      config:
+        headless: true
+        allowedHosts: []     # 远程站点域名在此登记（本地主机开箱即用）
+```
+
+- **源码**：`plugins/browser-reader/`（自包含：入口 + skill）
+- **依赖**：`playwright-core`（`npm run install:plugins` 自动装进 profile）
+- **安装**：`npm run install:plugins`（内置加载期自检，失败则跳过不装）
+- **文档**：[docs/BROWSER-READER.md](docs/BROWSER-READER.md)
+- **容错参考**：schema 事故复盘见 [docs/LESSONS.md](./docs/LESSONS.md)「3.4」、DSH 插件容错研究见 [docs/PLUGIN-RESILIENCE.md](docs/PLUGIN-RESILIENCE.md)
+
+---
+
 ## 脚手架：如何往这个项目里加新插件
 
 **目录规矩（重要，新插件必须遵守）**：
@@ -183,14 +212,18 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 | Agent preset | `presets/<name>/`（`agent.cordis.yml` + `preset.yml`） | `npm run install:flash-worker` 渲染安装 |
 | 独立进程插件 | `src/`（桥接器等，通过 `/api` 协议通信） | 独立 launchd 服务 |
 
-1. **DSH 宿主插件**（如 MiniMax 搜索、cron-scheduler）→ 一律放 `plugins/<name>/` 子目录，
+1. **DSH 宿主插件**（如 MiniMax 搜索、cron-scheduler、browser-reader）→ 一律放 `plugins/<name>/` 子目录，
    一个插件一个目录（入口文件 + 核心代码同目录，自包含）；
    用 `npm run install:plugins` 整目录同步到宿主 `plugins/<name>/`，patch 引用
    `./plugins/<name>/<入口文件>`（见 [scripts/install-plugins.mjs](scripts/install-plugins.mjs)）。
+   **安装前自动跑加载期自检**（`scripts/check-plugin.mjs`，用 DSH 真实 schema 校验器），
+   自检失败则跳过安装并报错——**杜绝装上会让 DSH 起不来的插件**。
 2. **独立进程类**（如钉钉桥接器）→ 放 `src/`，共享 `/api` 协议，与宿主插件无依赖。
 3. **Agent preset**（如 flash-worker）→ 放 `presets/<name>/`，由脚手架渲染安装到
    `~/.dsh/.agent-presets/<name>/`。
-4. 新插件务必写**文档**（带 frontmatter）+ **测试**（放 `test/`）+ 更新 README 插件目录。
+4. 新插件务必写**文档**（带 frontmatter）+ **测试**（放 `test/`）+ 更新 README 插件目录；
+   **schema 纪律**：`output.schema` 用对象级 `required: [...]`，`parameters` 才用字段级
+   `required: true`（详见 [docs/LESSONS.md](./docs/LESSONS.md)「3.4」）。
 
 > 规矩的本质：`plugins/` 只装 DSH 宿主插件（被 `cordis.patch.yml` 加载），`src/` 只装独立进程
 > （被 launchd/npm start 拉起），`presets/` 只装 agent preset（被脚手架装到用户 preset 根），
@@ -249,7 +282,8 @@ npm run install:flash-worker -- --show
 ├── tools/
 │   └── restart-dsh-and-verify.mjs # launchd 重启 DSH 并自动验证
 ├── scripts/
-│   ├── install-plugins.mjs      # 脚手架：整目录同步 plugins/<name>/ → 宿主 plugins/<name>/
+│   ├── install-plugins.mjs      # 脚手架：整目录同步 plugins/<name>/ → 宿主 plugins/<name>/（含加载期自检门）
+│   ├── check-plugin.mjs         # 脚手架：插件加载期自检（真实 DSH schema 校验器，重启前必跑）
 │   ├── install-flash-preset.mjs # 脚手架：渲染并安装 flash-worker preset
 │   └── setup.mjs                # 一键式：装插件 + 装 preset +（可选）切默认
 ├── test/                    # 集成测试（需要 DSH 在线）
@@ -257,11 +291,13 @@ npm run install:flash-worker -- --show
 ├── docs/
 │   ├── ARCHITECTURE.md      # 架构与协议说明
 │   ├── DEPLOYMENT.md        # 钉钉开放平台配置 + 部署指南
-│   ├── LESSONS.md           # 研发复盘与踩坑记录
+│   ├── LESSONS.md           # 研发复盘与踩坑记录（含 3.4 工具 schema 铁律）
 │   ├── PLUGIN-ECOSYSTEM.md  # 插件生态导览（两类插件 + 目录规划）
 │   ├── DSH-NOTES.md         # DSH 知识沉淀（官方动态 + 插件机制）
 │   ├── CRON-SCHEDULER-INCIDENT.md # 定时任务事故复盘 + 插件开发法则
-│   └── MINIMAX-SEARCH.md    # MiniMax 搜索接入指南
+│   ├── MINIMAX-SEARCH.md    # MiniMax 搜索接入指南
+│   ├── BROWSER-READER.md    # 浏览器阅读插件（web_read 系列工具）
+│   └── PLUGIN-RESILIENCE.md # 第三方插件容错研究（为什么 fail-loud + 自检防线）
 └── .env.example
 ```
 
@@ -269,10 +305,12 @@ npm run install:flash-worker -- --show
 
 - [部署指南（钉钉桥接器 · 含钉钉开放平台从零配置）](docs/DEPLOYMENT.md)
 - [架构与协议说明](docs/ARCHITECTURE.md)
-- [研发复盘与踩坑记录](docs/LESSONS.md)（含外部 IM/机器人对接方法论）
+- [研发复盘与踩坑记录](docs/LESSONS.md)（含外部 IM/机器人对接方法论、工具 schema 铁律 3.4）
 - [插件生态导览](docs/PLUGIN-ECOSYSTEM.md)（两类插件区别、目录规划、如何扩展）
 - [DSH 知识沉淀](docs/DSH-NOTES.md)（官方动态 + 宿主插件机制实战）
 - [MiniMax 搜索接入指南](docs/MINIMAX-SEARCH.md)（一键接入 DSH 宿主 Web 搜索）
+- [浏览器阅读插件](docs/BROWSER-READER.md)（web_read 系列，读 JS 渲染页面）
+- [第三方插件容错研究](docs/PLUGIN-RESILIENCE.md)（第三方插件为何能搞崩 DSH + 自检防线）
 - [flash-worker 多 Agent 协同](docs/FLASH-WORKER.md)（pro 指挥、flash 执行的 preset 原理/安装/使用）
 
 ## 测试

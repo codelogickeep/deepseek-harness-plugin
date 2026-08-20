@@ -272,6 +272,44 @@ active 目标（旧值 `64dc23b2`），桥接器 `_tryActivePush` 只匹配 acti
 - `sessionWebhook` 是每条消息自带的回传地址，直接 POST 即可回复（无需 access_token）——
   这是 Stream 模式最省事的回复方式。
 
+### 3.4 DSH 宿主插件工具 schema 铁律（2026-08-20 事故复盘）
+
+**事故**：新增 `browser-reader` 宿主插件（5 个 `web_read*` 工具）后，`dsh web` 直接启动崩溃：
+`unsupported JSON schema: schema.properties.pageId.required is not supported on type "string"`。
+
+**根因（DSH 工具 schema 有两套语法，不能混用）**：
+
+| 位置 | 语法 | `required` 写法 |
+| --- | --- | --- |
+| `defineTool`/`register` 的 **`parameters`** | DSH 参数 DSL | 字段级 `{ type, required: true, description }` ✅ |
+| 工具的 **`output.schema`** | **标准 JSON Schema 受限子集** | `required: ['a','b']` **只能在 `type:"object"` 节点**；属性节点内部写 `required: true` 即报错 ❌ |
+
+我参照社区 TS 插件（dsh-preview）时，把 `parameters` 的字段级 `required: true` 照搬到了
+`output.schema.properties.*` 里，触发 `assertSupportedJsonSchema`（`dsh-tools` lib）校验失败。
+
+**正确写法**：
+```js
+output: {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: { pageId: { type: 'string' } },   // ← 属性节点不写 required
+    required: ['pageId'],                          // ← 必填在 object 根声明
+  },
+}
+```
+
+**铁律（写 DSH 宿主工具插件必守）**：
+1. `parameters` 用字段级 `required: true`；`output.schema` 用对象级 `required: [...]`。
+2. **凡是 patch 层新增/修改工具插件行，先做「加载期自检」再重启 DSH**：写个 stub `ctx`
+   （`{ tools:{ register:(def)=>{}, effect:()=>{} }, inject:()=>{} }`）直接 `import` 插件模块
+   并调 `apply(ctx, cfg)`，确认不抛错再部署。`--dump-config` **只能验证配置树**，不会执行
+   `apply`，**验不出 schema 错误**——本次事故就是 `--dump-config` 通过但启动崩溃的。
+3. 别照抄社区 TS 插件写法到 `.mjs` 直连 `ctx.tools.register` 的场景——TS 插件的
+   `defineTool` 封装可能已把 schema 转成合法形态，直连 register 必须自己保证子集合规。
+4. 重启前备份/检查旧进程：`ps aux | grep "dsh web"` 确认当前 PID，kill 前清楚自己在干嘛；
+   重启后立即 `curl http://127.0.0.1:3080/` + `session.list` 双探针确认健康。
+
 ---
 
 ## 四、代码层面的改进（已经融入）

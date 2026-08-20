@@ -1,0 +1,9 @@
+{
+  "name": "dsh-browser-reader",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH 宿主插件：真实浏览器阅读（Playwright 驱动 Chromium/Edge，确定性读渲染后页面）",
+  "dsh": {
+    "bundle": {}
+  }
+}

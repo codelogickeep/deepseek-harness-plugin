@@ -33,6 +33,9 @@ status: active
 | 安全 | `subsystems/approval.md`、`sandbox.md`、`permission-presets.md`、`credentials.md`、`settings.md` | 审批、沙箱、权限、凭据 |
 | 插件开发实战 | `cookbook/*.md`（7 篇）、`subsystems/extensions.md`、`code-runtime.md`、`typert.md`、`defensive-patterns.md` | 加工具/LLM/包/节点、Code Mode、防御 |
 | 定时任务事故复盘 | `CRON-SCHEDULER-INCIDENT.md` | 会话日志白名单 + fs 沙箱可写根 → 「历史加载失败 + 死循环」一条根因链（含 5 条插件实战法则） |
+| 工具 schema 事故 + 铁律 | `LESSONS.md`「3.4」 | `output.schema` 用对象级 required、`parameters` 才用字段级 required；`--dump-config` 验不出 schema 错，须跑 `scripts/check-plugin.mjs` |
+| 第三方插件容错研究 | `PLUGIN-RESILIENCE.md` | 为什么第三方插件能搞崩 DSH（fail-loud 是设计）、`cordis:group` 隔离不了崩溃（源码+实验证据）、落地「部署前自检」防线 |
+| 浏览器阅读插件 | `BROWSER-READER.md` | Playwright 驱动真实浏览器，web_read 系列确定性读 JS 渲染页面 |
 | UI/事件图 | `subsystems/web-server.md`、`client-modules.md`、`web-styling.md`、`attachment.md`、`event-producer-consumer.md`、`feedback.md`、`user-questions.md`、`spill.md` | Web 服务器、客户端模块、事件产销图 |
 | 用户向开发 | `user/develop/**`、`user/guide/**` | 基础/框架/实践/指南 |
 | 配置/运行 | `config-catalog.md`、`development.md`、`testing.md`、`rescope.md`、`api-gateway.md`、`glossary.md` | 配置目录、开发、测试、API 协议、术语 |

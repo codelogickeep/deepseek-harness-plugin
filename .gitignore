@@ -32,3 +32,10 @@ dist/
 build/
 coverage/
 *.tgz
+
+# ---- 运行时产物 ----
+# 插件运行时生成的截图目录（browser-reader web_read_screenshot）
+.dsh-web-read/
+
+# ---- 本地 npm 缓存隔离目录 ----
+.npm-cache/
