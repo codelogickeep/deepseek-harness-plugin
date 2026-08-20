@@ -60,7 +60,7 @@
 - **禁止触碰**：`conversation.chat.node` 是 keyed slot，官方已占用
   `assistant-step`/`tool-call`/`user` 等 key——自定义 UI 不在此注册
 - **client→host 通道**：Node 半身注册 `webServer` HTTP 路由，client 用 `fetch('/api/...')`
-  调用（dsh-webui 同款范式）
+  调用（dsh-webui 同款范式）；实时推送用 **SSE**（`/api/ui-enhance/events` 长连接 + fs.watch）
 
 ## 开发/部署/验收
 
@@ -72,8 +72,10 @@ node scripts/install-plugins.mjs
 node scripts/check-plugin.mjs plugins/ui-enhance/lib/index.js
 
 # 重启 DSH 使 Node 路由生效（前端刷新即可拉新 bundle）
-# 验收：会话头部 → 「⧉ 打开 VS Code」按钮 + 状态面板
+# 验收：会话头部 → 状态面板 + 🔧统计 + ⋮☰文件树 + ⧉IDE（顺序：状态→统计→IDE→文件树最右）
 #      POST /api/ui-enhance/open-in-editor → {"ok":true,...}
+#      GET  /api/ui-enhance/tree?dir= → 文件树 + git 汇总
+#      实时刷新：面板打开时创建/删除临时文件 → 条目即时增删（fs.watch+SSE）
 ```
 
 ## 事故教训（inject 门禁）

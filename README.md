@@ -226,7 +226,7 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 - **源码**：`plugins/ui-enhance/`（`src/index.ts` Node 半身 + `src/client/` client 半身）
 - **构建**：`tsdown`（client bundle closure-factory） + `tsc`（Node 半身）
 - **安装**：`npm run install:plugins`（自动：构建 → Node 半身 self-check → pnpm 装进 profile → bundle 验证）
-- **通道**：client 用 `fetch('/api/ui-enhance/...')` 调 Node 半身 `webServer` 路由（dsh-webui 同款范式）
+- **通道**：client 用 `fetch('/api/ui-enhance/...')` 调 Node 半身 `webServer` 路由（dsh-webui 同款范式）；实时刷新走 **EventSource (SSE)** `/api/ui-enhance/events`（fs.watch 推送）
 - **文档**：[docs/UI-ENHANCE.md](docs/UI-ENHANCE.md)（架构图 + 部署验收 + inject 门禁事故教训）
 
 > **inject 门禁**（重要）：cordis 强制「访问服务必须在插件的 `inject` 导出里声明」。
@@ -312,7 +312,7 @@ npm run install:flash-worker -- --show
 │   │   ├── cron.js              #   cron 解析/下一命中（核心算法）
 │   │   └── scheduler.js         #   调度状态机/防重复（核心算法）
 │   └── ui-enhance/              # client bundle 插件（npm 包形态）
-│       ├── src/index.ts         #   Node 半身：webServer 路由(open-in-editor/editors/tree/git)
+│       ├── src/index.ts         #   Node 半身：webServer 路由(editors/tree/git/events-SSE+fs.watch)
 │       ├── src/client/          #   client 半身：状态面板 + 工具统计 + 文件树 + 打开IDE按钮
 │       └── tsdown.config.ts     #   closure-factory bundle 构建
 ├── presets/                 # Agent preset（脚手架渲染安装到 ~/.dsh/.agent-presets/）
@@ -362,6 +362,8 @@ npm test
 ```
 
 测试包含 **DSH 真实协议集成测试**（需要 DSH Web 在线）与**桥接端到端测试**（用 Mock 钉钉模拟 Stream 消息，验证 钉钉→DSH→回复→钉钉 全链路）。
+
+**ui-enhance 前端验证**（Playwright-core 驱动本机 Chrome，连 `http://127.0.0.1:3080`）：每次改 client/Node 半身后，用临时脚本打开会话 → 刷新拉新 bundle → 断言头部元素/文件树/git 徽标/实时刷新（创建/删除临时文件观察面板即时增删）。验证通过再提交，杜绝「改完 UI 挂掉」。
 
 ## 安全提醒
 
