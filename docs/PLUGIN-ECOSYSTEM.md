@@ -74,7 +74,7 @@ nohup npm start > /tmp/bridge.log 2>&1 &
 1. 拷贝整个项目（或 `git clone`）。
 2. `npm install`（装 `dingtalk-stream`、`ws`）。
 3. 复制 `.env.example` 为 `.env`，修改：
-   - `DSH_BASE_URL` → **目标机器上 DSH 的地址**
+   - `DSH_BASE_URL` → **目标机器上 DSH 的地址**。⚠️ **不要写进 `.env`**：dsh ≥0.1.1 会拒绝 `.env` 里的 `DSH_*` 变量（仅启动环境可设，见 `dsh-app-boot` bootstrap 限制）。改法：启动桥接器时作为进程环境导出（`DSH_BASE_URL=... npm start`），或直接改 `config/config.json` 的 `dsh.baseUrl`（默认 `http://127.0.0.1:3080` 已兜底，通常无需改）。
    - 钉钉 `DINGTALK_APP_KEY / APP_SECRET` → **同一套企业应用的凭证**（钉钉消息只发给这套凭证的机器人）
    - `DINGTALK_STREAM_ENABLED=true`
 4. `npm start`。

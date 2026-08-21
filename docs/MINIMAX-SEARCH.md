@@ -32,7 +32,11 @@ Body:    { "q": "查询词" }
 |---|---|---|
 | 1 | `plugins/minimax-search/minimax-search.mjs` | 插件源码（**仓库唯一真相源**）→ 脚手架同步到宿主 |
 | 2 | 宿主 `~/.dsh/profiles/web/cordis.patch.yml` | 停用内置 DeepSeek + 把 `web.searchProvider` 指向 `minimax` + 插入插件行 |
-| 3 | `~/.dsh/.env` | 存放 `MINIMAX_API_KEY`（DSH 启动自动读） |
+| 3 | key 配置（三选一） | 新逻辑默认走 **`ctx.credentials`**（界面可写/轮换不重启）；兼容 `~/.dsh/.env` 的 `MINIMAX_API_KEY` 与 patch 里字面 `config.apiKey` |
+
+> **2026-08-21 适配（dsh 0.1.1-rc.2）**：凭据解析已对齐官方 `dsh-web-search-deepseek` 的新逻辑——
+> 优先级 `config.apiKey`（字面）> `ctx.credentials.resolve(apiKeyEnv)` > launchEnvironment 快照，
+> 并接入 `@deepseek-ai/dsh-web` 的 `WebError`（`WEB_PROVIDER_ERROR` / `WEB_ABORTED`）。
 
 ---
 
@@ -83,11 +87,14 @@ npm run install:plugins           # 同步 plugins/ → ~/.dsh/profiles/web/plug
 > 脚手架脚本见 [scripts/install-plugins.mjs](../scripts/install-plugins.mjs)。
 
 要点（如需手写/看懂插件）：
-- 导出 `{ name, inject: ['web'], apply(ctx, config) }`。
-- `apply` 里调用 `ctx.web.registerSearchProvider(new MiniMaxSearchProvider({apiKey, env}))`。
-- `env` 来自 `ctx.get('launchEnvironment')`；`resolveApiKey()` **每次实时**解析（config.apiKey → launchEnvironment 快照）。
+- 导出 `{ name, inject: ['web'], apply(ctx, config) }`（同步 apply）。
+- `apply` 里调用 `ctx.web.registerSearchProvider(new MiniMaxSearchProvider({...}))`。
+- 凭据解析优先级 `config.apiKey`（字面）> `ctx.credentials.resolve(apiKeyEnv)` > launchEnvironment 快照；
+  `resolveApiKey()` **每次调用实时**解析，credentials 缺席自动降级（零配置可用）。
+- 错误走 `@deepseek-ai/dsh-web` 的 `WebError`（`WEB_PROVIDER_ERROR` / `WEB_ABORTED`），与官方 provider 同构。
 - **绝不使用 `process.env`**：宿主插件环境没有 `process`（会抛 ReferenceError）。
 - `fetch` 是全局可用（与内置 `dsh-web-search-deepseek` 同款用法）。
+- 官方 seam 包经**宿主锚点**（`~/.dsh/profiles`）惰性解析（`createRequire`），解析不到自动降级为纯 fetch + 环境变量的旧行为。
 
 ### 第 3 步：配置宿主 patch
 
@@ -112,14 +119,36 @@ npm run install:plugins           # 同步 plugins/ → ~/.dsh/profiles/web/plug
 > ⚠️ **为什么必须改 `web.searchProvider`**：`dsh-base` bundle 默认把 `web.searchProvider` 配成 `deepseek-official`。
 > 只注册 minimax 不够，选择规则会因「已配置 id」永远选 DeepSeek。必须覆盖为 `minimax`。
 
-### 第 4 步：配置 API key
+### 第 4 步：配置 API key（三选一，按推荐排序）
 
-把 key 写入 DSH 用户层 env 文件（DSH 启动 `loadLayeredEnv` 会读它并注入 launchEnvironment 快照）：
+**方式 A（新逻辑，推荐）：写入 DSH 凭据服务 `~/.dsh/.credentials.yaml`**
+
+DSH 0.1.1 起提供 `ctx.credentials` 凭据服务（`dsh-base` bundle 内置 `dsh-credentials-local`）。
+把 key 存成凭据引用 `MINIMAX_API_KEY`，插件每次操作经 `ctx.credentials.resolve()` 实时解析——
+**改配置界面即可轮换、无需重启 DSH、不进任何配置文件**：
+
+```bash
+# 写入凭据（source 层：local；同名进程环境会遮蔽它，见 dsh-credentials 文档）
+# 官方 web 界面「Models」页写 DeepSeek key 走的就是这个通道；
+# 手动命令行写入可参考官方 dsh-credentials-local 的写接口，或继续用方式 B。
+```
+
+**方式 B（兼容，零配置）：`~/.dsh/.env`**（DSH 启动 `loadLayeredEnv` 会读它并注入 launchEnvironment 快照）
 
 ```bash
 KEY=$(grep -m1 '^export MINIMAX_API_KEY=' ~/.zshrc | sed 's/^export MINIMAX_API_KEY=//; s/["'"'"']//g')
 echo "MINIMAX_API_KEY=$KEY" > ~/.dsh/.env
 chmod 600 ~/.dsh/.env
+```
+
+**方式 C（最高优先级）：patch 里字面 `config.apiKey`**
+
+```yaml
+- id: minimax-search
+  name: ./plugins/minimax-search/minimax-search.mjs
+  config:
+    apiKey: sk-xxxx        # 字面量最高优先级（覆盖 credentials / 环境变量）
+    apiKeyEnv: MINIMAX_API_KEY   # 可选：改凭据引用名（默认 MINIMAX_API_KEY）
 ```
 
 ### 第 5 步：生效与验证
@@ -140,10 +169,11 @@ chmod 600 ~/.dsh/.env
 | 现象 | 原因 | 解决 |
 | --- | --- | --- |
 | 报 `****park is invalid` | 选到内置 DeepSeek（`web.searchProvider` 仍为 `deepseek-official`） | 换成 `minimax`，且 `web-search-deepseek` 可 `disabled: true` |
-| 报 `no usable web provider` / `WEB_PROVIDER_UNAVAILABLE` | minimax `available()` 为 false（key 没读到） | 检查 `~/.dsh/.env` 有 key；插件 `resolveApiKey` 从 launchEnvironment 读 |
+| 报 `no usable web provider` / `WEB_PROVIDER_UNAVAILABLE` | minimax `available()` 为 false（key 没读到） | 检查 `~/.dsh/.env` 或 `ctx.credentials` 有 key；插件 `resolveApiKey` 会实时解析 |
 | 报 `multiple usable ... AMBIGUOUS` | 配了多个可用 provider 且未显式选 | 在 `web.config.searchProvider` 里指定一个 |
 | 插件不加载（lsof 看不到插件文件） | patch 未生效 / 需重启 | 确认 patch YAML 合法；重启 DSH |
 | 宿主插件里 `process is not defined` | 宿主环境无 `process` | 改用 `launchEnvironmentOf(ctx)` 读 env / key |
+| 报 `WEB_ABORTED` | 搜索被取消/超时（正常） | 无需处理；工具层会按取消处理 |
 
 ---
 
@@ -167,67 +197,68 @@ rm ~/.dsh/profiles/web/plugins/minimax-search.mjs
 
 ## 附录 A：插件源码模板
 
-`~/.dsh/profiles/web/plugins/minimax-search.mjs`：
+当前实现见仓库 `plugins/minimax-search/minimax-search.mjs`（**唯一真相源**，本附录为要点摘要；
+用 `npm run install:plugins` 同步到宿主，勿手写宿主副本）。核心结构：
 
 ```js
+import { createRequire } from 'node:module'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+
+// 宿主锚点解析官方 seam 包（~/.dsh/profiles 可触达全局 dsh 的 node_modules）；
+// 解析失败返回 null → 调用方降级，插件永远可加载。
+function loadHostModule(name) {
+  try {
+    const req = createRequire(join(homedir(), '.dsh', 'profiles', '__probe__.cjs'))
+    return req(name)
+  } catch { return null }
+}
+
 export class MiniMaxSearchProvider {
-  constructor({ apiKey = '', env = undefined } = {}) {
-    this.id = 'minimax';
-    this.apiKey = apiKey;
-    this.env = env;
-  }
-  resolveApiKey() {
-    if (this.apiKey) return this.apiKey;
-    return this.env?.get?.('MINIMAX_API_KEY')?.value || '';
+  constructor({ id = 'minimax', resolveApiKey, resolveApiKeySync, env, WebErrorMod } = {}) {
+    this.id = id
+    this._resolveApiKey = resolveApiKey      // 每次操作实时解析（异步）
+    this._resolveApiKeySync = resolveApiKeySync // 同步快照（available() 用）
+    this._WebError = WebErrorMod || loadHostModule('@deepseek-ai/dsh-web')?.WebError || null
   }
   available() {
-    return Boolean(this.resolveApiKey());
+    if (this._resolveApiKeySync) { const k = this._resolveApiKeySync(); if (k) return true }
+    return this._resolveApiKey !== undefined   // 有异步解析器视为可用（运行时再判，与官方一致）
   }
   async search(request, signal) {
-    const query = request.query;
-    const apiKey = this.resolveApiKey();
-    if (!query || !apiKey) return { sources: [], truncated: false };
-    const res = await fetch('https://api.minimaxi.com/v1/coding_plan/search', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ q: query }),
-      ...(signal !== undefined ? { signal } : {}),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`MiniMax 搜索失败 HTTP ${res.status}: ${text.slice(0, 200)}`);
-    }
-    const data = await res.json();
-    if (data.base_resp && data.base_resp.status_code && data.base_resp.status_code !== 0) {
-      throw new Error(`MiniMax 搜索错误 ${data.base_resp.status_code}: ${data.base_resp.status_msg || 'unknown'}`);
-    }
-    const organic = Array.isArray(data.organic) ? data.organic : [];
-    const sources = organic
-      .slice(0, request.maxResults)
-      .map((e) => ({
-        url: e.link || '',
-        title: e.title || '',
-        snippet: e.snippet || '',
-        publishedAt: e.date || undefined,
-      }))
-      .filter((s) => s.url);
-    return { sources, truncated: false };
+    // ... fetch coding_plan/search；错误抛 WebError(WEB_PROVIDER_ERROR / WEB_ABORTED)，
+    //    无 WebError 时降级 Error + err.code（行为等价）
   }
 }
 
-export const name = 'minimax-search';
-export const inject = ['web'];
+export const name = 'minimax-search'
+export const inject = ['web']
 export function apply(ctx, config) {
-  const env = ctx.get('launchEnvironment');
-  ctx.web.registerSearchProvider(new MiniMaxSearchProvider({ apiKey: config?.apiKey || '', env }));
+  const apiKeyEnv = config?.apiKeyEnv || 'MINIMAX_API_KEY'
+  const literalApiKey = config?.apiKey || ''
+  const provider = new MiniMaxSearchProvider({
+    id: 'minimax',
+    resolveApiKey: async () => {
+      // 1) 字面 key  2) ctx.credentials.resolve(apiKeyEnv)  3) launchEnvironment 快照
+      if (literalApiKey) return literalApiKey
+      const credentials = ctx.get?.('credentials')
+      if (credentials) {
+        const resolved = await credentials.resolve(apiKeyEnv)
+        if (resolved?.value) return resolved.value
+      }
+      const env = ctx.get?.('launchEnvironment')
+      return env?.get?.(apiKeyEnv)?.value || ''
+    },
+    resolveApiKeySync: () => {
+      if (literalApiKey) return literalApiKey
+      return ctx.get?.('launchEnvironment')?.get?.(apiKeyEnv)?.value || ''
+    },
+  })
+  ctx.web.registerSearchProvider(provider)
 }
 ```
 
-> 提示：`config` 里可选配 `apiKey`（字面量）作为最高优先级；不配则用 launchEnvironment 的 `MINIMAX_API_KEY`。
+> 提示：`config` 里可选配 `apiKey`（字面量，最高优先级）与 `apiKeyEnv`（凭据引用名，默认 `MINIMAX_API_KEY`）。
 > 区域切换可把 endpoint 抽成 `MINIMAX_API_HOST` 驱动（见 `docs/DSH-NOTES.md`）。
 
 ---

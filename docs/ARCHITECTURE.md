@@ -123,7 +123,7 @@ DSH 本身是一个本地运行的 Harness（Web UI 在 `http://127.0.0.1:3080`�
 
 | 环境变量 | 说明 |
 | --- | --- |
-| `DSH_BASE_URL` | DSH Web 地址，默认 `http://127.0.0.1:3080` |
+| `DSH_BASE_URL` | DSH Web 地址，默认 `http://127.0.0.1:3080`。⚠️ **不在 `.env` 里配**（dsh ≥0.1.1 拒绝 `.env` 中的 `DSH_*`，仅启动环境可设）；需覆盖时用进程环境导出或 `config/config.json` 的 `dsh.baseUrl` |
 | `DINGTALK_APP_KEY` | 钉钉企业内部应用 AppKey |
 | `DINGTALK_APP_SECRET` | 钉钉企业内部应用 AppSecret |
 | `DINGTALK_ROBOT_CODE` | 机器人编码（通常=AppKey） |

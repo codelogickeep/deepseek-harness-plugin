@@ -137,7 +137,7 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 - **安装**：`npm run install:plugins`（脚手架同步到 `~/.dsh/profiles/web/plugins/`）
 - **一键接入**：[docs/MINIMAX-SEARCH.md](docs/MINIMAX-SEARCH.md)
 - **宿主机制**：`cordis.patch.yml` disable 内置 DeepSeek + `searchProvider: minimax` + 插入插件行
-- **key**：`~/.dsh/.env`（DSH 启动自动读取，不入库）
+- **key**：新版（dsh ≥0.1.1）优先走 `ctx.credentials` 凭据服务（界面可写/轮换不重启），兼容 `~/.dsh/.env` 的 `MINIMAX_API_KEY` 与 patch 字面 `config.apiKey`
 
 ---
 
