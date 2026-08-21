@@ -104,10 +104,25 @@ function openInEditor(workspacePath: string, editor = 'vscode', fileRel?: string
   })
 }
 
-/** 获取当前工作区根（注册表第一个的 path）。 */
-function resolveWorkspace(ctx: Context): string {
+/**
+ * 获取工作区根。
+ * - 传入 sessionId 时：按「会话 → 所属 workspace」映射跟随当前会话（切换会话即换目录）
+ * - 无 sessionId 或找不到时：回退注册表第一个
+ */
+function resolveWorkspace(ctx: Context, sessionId?: string): string {
   const workspaces = ctx.workspaceRegistry.list()
+  if (sessionId) {
+    // 运行时的 Workspace 实体含 sessionIds（类型 stub 未声明，用断言访问）
+    const owned = workspaces.find((w) =>
+      (w as { sessionIds?: readonly string[] }).sessionIds?.includes(sessionId))
+    if (owned?.path) return owned.path
+  }
   return workspaces[0]?.path ?? ''
+}
+
+/** 当前所有工作区路径（SSE 全量监听：任一工作区变化都广播）。 */
+function listWorkspaceRoots(ctx: Context): string[] {
+  return ctx.workspaceRegistry.list().map((w) => w.path).filter(Boolean)
 }
 
 /** 需要跳过的目录（不进入递归/展示）。 */
@@ -226,27 +241,30 @@ function isNoisePath(p: string): boolean {
   return parts.some((part) => part === '.git' || part === 'node_modules')
 }
 
-/** 启动对工作区根的文件系统监听（macOS/FSEvents 支持 recursive）。返回清理函数。 */
-function startWorkspaceWatcher(root: string): () => void {
-  let watcher: ReturnType<typeof watch> | null = null
-  try {
-    watcher = watch(root, { recursive: true }, (_eventType, filename) => {
-      if (!filename) return
-      const p = String(filename)
-      if (isNoisePath(p)) return
-      broadcastChanged()
-    })
-  } catch (err) {
-    // recursive 在某些平台不可用：降级为非递归（至少捕获根级变化）
+/** 启动对多个工作区根的文件系统监听（macOS/FSEvents 支持 recursive）。返回清理函数。 */
+function startWorkspaceWatchers(roots: string[]): () => void {
+  const watchers: Array<ReturnType<typeof watch>> = []
+  for (const root of roots) {
     try {
-      watcher = watch(root, (_eventType, filename) => {
+      const w = watch(root, { recursive: true }, (_eventType, filename) => {
         if (!filename) return
-        if (isNoisePath(String(filename))) return
+        const p = String(filename)
+        if (isNoisePath(p)) return
         broadcastChanged()
       })
-      console.warn('[ui-enhance] fs.watch recursive 不可用，降级为非递归监听')
-    } catch (err2) {
-      console.warn('[ui-enhance] fs.watch 启动失败:', String(err2))
+      watchers.push(w)
+    } catch (err) {
+      // recursive 在某些平台不可用：降级为非递归（至少捕获根级变化）
+      try {
+        const w = watch(root, (_eventType, filename) => {
+          if (!filename) return
+          if (isNoisePath(String(filename))) return
+          broadcastChanged()
+        })
+        watchers.push(w)
+      } catch (err2) {
+        console.warn(`[ui-enhance] fs.watch 启动失败 (${root}):`, String(err2))
+      }
     }
   }
   return () => {
@@ -255,7 +273,7 @@ function startWorkspaceWatcher(root: string): () => void {
     }
     sseClients.clear()
     if (sseTimer !== null) { clearTimeout(sseTimer); sseTimer = null }
-    watcher?.close()
+    for (const w of watchers) { try { w.close() } catch { /* noop */ } }
   }
 }
 
@@ -268,12 +286,12 @@ export function apply(ctx: Context): void {
     },
   }), 'ui-enhance: routes')
 
-  // 文件系统监听：工作区变化（git 提交/文件增删）→ SSE 广播 → 前端实时刷新
+  // 文件系统监听：全部工作区变化（git 提交/文件增删）→ SSE 广播 → 前端实时刷新
   ctx.effect(() => {
     let cleanup: (() => void) | null = null
     try {
-      const root = resolveWorkspace(ctx)
-      if (root) cleanup = startWorkspaceWatcher(root)
+      const roots = listWorkspaceRoots(ctx)
+      if (roots.length > 0) cleanup = startWorkspaceWatchers(roots)
     } catch (err) {
       console.warn('[ui-enhance] watcher 启动失败:', String(err))
     }
@@ -298,7 +316,8 @@ async function handle(ctx: Context, req: Req, res: Res): Promise<void> {
 
   if (req.method === 'GET' && suffix === '/tree') {
     try {
-      const root = resolveWorkspace(ctx)
+      const sessionId = params.get('session') ?? undefined
+      const root = resolveWorkspace(ctx, sessionId)
       if (!root) {
         json(res, 500, { error: 'no workspace' })
         return
@@ -333,12 +352,11 @@ async function handle(ctx: Context, req: Req, res: Res): Promise<void> {
     const body = await readBody(req)
     let workspace = String(body.workspace ?? body.path ?? '')
     if (!workspace) {
-      // 未显式指定时，用「最近工作区」（注册表第一个）的路径
-      try {
-        const workspaces = ctx.workspaceRegistry.list()
-        workspace = workspaces[0]?.path ?? ''
-      } catch (err) {
-        json(res, 500, { ok: false, message: `workspace registry unavailable: ${String(err)}` })
+      // 未显式指定时：优先「会话所属工作区」（跟随当前会话），回退注册表第一个
+      const sessionId = body.session ? String(body.session) : undefined
+      workspace = resolveWorkspace(ctx, sessionId)
+      if (!workspace) {
+        json(res, 500, { ok: false, message: 'no workspace' })
         return
       }
     }

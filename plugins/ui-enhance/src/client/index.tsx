@@ -223,7 +223,7 @@ const IDE_OPTIONS = [
 ]
 
 /** 选择菜单（点击 IDE 名切换）+ 打开按钮。 */
-function OpenInEditorButton(): React.ReactElement {
+function OpenInEditorButton(props: { sessionId?: string }): React.ReactElement {
   const [state, setState] = React.useState<'idle' | 'busy' | 'done' | 'error'>('idle')
   const [hovered, setHovered] = React.useState(false)
   const [pressed, setPressed] = React.useState(false)
@@ -268,7 +268,7 @@ function OpenInEditorButton(): React.ReactElement {
       const res = await fetch('/api/ui-enhance/open-in-editor', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ editor: current.id }),
+        body: JSON.stringify({ editor: current.id, session: props.sessionId }),
       })
       setState(res.ok ? 'done' : 'error')
     } catch {
@@ -595,7 +595,7 @@ interface TreeNode {
 
 /** 右侧文件树抽屉 + 右上角开关。 */
 /** 右侧文件树面板（对齐左侧侧边栏的浅色融入风格）+ 右上角开关。 */
-function FileTreePanel(): React.ReactElement {
+function FileTreePanel(props: { sessionId?: string }): React.ReactElement {
   const [open, setOpen] = React.useState(false)
   const [width, setWidth] = React.useState(280)
   const [root, setRoot] = React.useState('')
@@ -609,12 +609,17 @@ function FileTreePanel(): React.ReactElement {
   // 树版本号：任一节点展开/收起后 +1，强制重渲染
   const [, setTreeVersion] = React.useState(0)
 
+  // 当前会话 id（framework-standard props 注入，切换会话即切换工作区）
+  const sessionId = props.sessionId
+  // fetch 时附加 session 参数：让 Node 侧解析「会话所属工作区」
+  const sessionQuery = sessionId ? `&session=${encodeURIComponent(sessionId)}` : ''
+
   // 打开时加载根目录
   const loadRoot = React.useCallback(async () => {
     setLoadingRoot(true)
     setErr('')
     try {
-      const r = await fetch('/api/ui-enhance/tree?dir=')
+      const r = await fetch(`/api/ui-enhance/tree?dir=${sessionQuery}`)
       const d: { root: string, git: GitSummary | null, entries: TreeEntry[] } = await r.json()
       setRoot(d.root)
       setGit(d.git ?? null)
@@ -624,12 +629,12 @@ function FileTreePanel(): React.ReactElement {
     } finally {
       setLoadingRoot(false)
     }
-  }, [])
+  }, [sessionQuery])
 
   // 轻量刷新：同步 git 汇总 + 根级条目（git 徽标 + 新增/删除），保留展开状态
   const refreshGit = React.useCallback(async (): Promise<void> => {
     try {
-      const r = await fetch('/api/ui-enhance/tree?dir=')
+      const r = await fetch(`/api/ui-enhance/tree?dir=${sessionQuery}`)
       const d: { git: GitSummary | null, entries: TreeEntry[] } = await r.json()
       setGit(d.git ?? null)
       setRootNodes((prev) => {
@@ -647,7 +652,17 @@ function FileTreePanel(): React.ReactElement {
         return next
       })
     } catch { /* 刷新失败静默，不影响已显示内容 */ }
-  }, [])
+  }, [sessionQuery])
+
+  // 切换会话（sessionId 变化）→ 重置到根并重新加载（跟随新会话的工作区）
+  const prevSession = React.useRef<string | undefined>(sessionId)
+  React.useEffect(() => {
+    if (prevSession.current !== sessionId) {
+      prevSession.current = sessionId
+      setSelPath('/')
+      if (open) void loadRoot()
+    }
+  }, [sessionId, open, loadRoot])
 
   // 面板打开时建立 SSE 连接：文件系统变化（git 提交/文件增删）→ 实时刷新 git 徽标
   React.useEffect(() => {
@@ -707,7 +722,7 @@ function FileTreePanel(): React.ReactElement {
     if (!node.loaded) {
       node.loading = true
       try {
-        const r = await fetch(`/api/ui-enhance/tree?dir=${encodeURIComponent(node.entry.path)}`)
+        const r = await fetch(`/api/ui-enhance/tree?dir=${encodeURIComponent(node.entry.path)}${sessionQuery}`)
         const d: { entries: TreeEntry[] } = await r.json()
         node.children = (d.entries ?? []).map((e) => ({ entry: e, loaded: false, children: [], expanded: false, loading: false }))
         node.loaded = true
@@ -732,7 +747,7 @@ function FileTreePanel(): React.ReactElement {
       await fetch('/api/ui-enhance/open-in-editor', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: filePath }),
+        body: JSON.stringify({ file: filePath, session: sessionId }),
       })
     } catch { /* ignore */ }
   }
