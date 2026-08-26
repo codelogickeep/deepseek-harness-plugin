@@ -371,13 +371,14 @@ output: {
 2. **生态早期的机会**：开发者预览版迭代极快，破坏性变更多，但先入场的人沉淀的方法论会成为稀缺经验；
 3. **方法论比工具更重要**：三次崩溃换来的「部署前自检」「绝不写自定义事件」「状态落沙箱可写根」——这些经验**不绑定 dsh**，任何 Agent 框架插件开发都通用。
 
-> 如果现场有人问「那跟 Claude Code / Codex 比呢？」——一句话带过，详见附录 D：
-> **「它们是精装房，dsh 是毛坯房+设计图——你能把 CC/Codex 的 hooks 搬进来、把它们当子 agent，还能自由换模型、全本地。对想搭自己工作流的人来说，这是独一份的。」**
+> 如果现场有人问「那跟 Claude Code / Codex / Dify / LangGraph 比呢？」——一句话带过，详见附录 E 的"四层楼"：
+> **「它们不是同类，是不同层级：CC/Codex 是精装房（成品），Dify 是物业公司（低代码平台），LangGraph/ADK 是建材店（代码框架）——dsh 是毛坯房+设计图，还允许你把精装房的家具搬进来（hooks/子 agent）。对想搭自己工作流的人来说，这是独一份的。」**
 
 **展望**：等官方出进程级插件隔离后（现在 `cordis:group` 只隔离服务实例、不隔离崩溃），第三方插件质量门槛会降低；在那之前，我仓库里的这套「自检 + 门禁 + 契约检查」就是性价比最高的防线。
 
 **Q&A 引导**（如果有人问）：
-- 「DSH 和 Claude Code / Codex 有什么区别？」→ **完整对比看本文最后的「附录 D」**。一句话：CC/Codex 是精装房，dsh 是毛坯房+设计图——dsh 能跑你已有的 CC/Codex hooks、能把它们当子 agent，还能自由换模型、全本地；
+- 「DSH 和 Claude Code / Codex 有什么区别？」→ **完整对比看本文最后的「附录 E」（五类全对比：dsh/CC/Codex/Dify/LangGraph·ADK）与「附录 D」（聚焦 CC/Codex）**。一句话：CC/Codex 是精装房，dsh 是毛坯房+设计图——dsh 能跑你已有的 CC/Codex hooks、能把它们当子 agent，还能自由换模型、全本地；
+- 「那和 Dify / LangGraph 这些呢？」→ 不是同类竞品，是不同层级：Dify 是给业务/产品的低代码应用平台，LangGraph/ADK 是给开发者的代码级编排库，dsh 是中间的"Agent 底座/harness"——详见附录 E 的四层楼模型；
 - 「自己写一个插件要多久？」→ 读一遍 `article`（5 分钟），跟着 checklist 写，工具型插件一个晚上能出活。
 
 ---
@@ -388,7 +389,7 @@ output: {
 | --- | --- | --- |
 | 只剩 10 分钟 | §6 可移植性、§3.3 亮点 B | §2 设计态 2.1–2.4（这是听懂全场的地基）、§4 三个事故 |
 | 只剩 7 分钟 | §3 全家福合并进 §1，§2.4 时序图口头带过 | §2.1–2.3（叠层图+最小插件）、§4 + §5 |
-| 要 20 分钟 | §2.4 展开官方时序图逐帧讲 + 现场演示（更稳：现场开 dsh 展示文件树实时刷新 + web_read 读页面）+ 附录 D 对比展开讲 | 全部保留，Q&A 延长 |
+| 要 20 分钟 | §2.4 展开官方时序图逐帧讲 + 现场演示（更稳：现场开 dsh 展示文件树实时刷新 + web_read 读页面）+ **附录 E 四层楼模型展开讲（强烈推荐）** | 全部保留，Q&A 延长 |
 
 ## 附录 B：关键数据一览（背稿可用）
 
@@ -397,6 +398,7 @@ output: {
 - 插件：6 类能力（钉钉桥接 / browser-reader / minimax-search / cron-scheduler / ui-enhance / flash-worker）
 - 时间线：8/13 dsh 开源 → 8/17 系统学习+钉钉桥接 → 8/20–8/26 插件集合开源
 - 版本追踪：0.1.0-rc.8 → 0.1.1-rc.2（期间三次自研事故全部修复）
+- **五类对比速记**：CC/Codex=精装房（成品 CLI）· Dify=物业公司（低代码平台）· LangGraph/ADK=建材店（代码框架）· **dsh=毛坯房+设计图（harness 底座）**；2026-08-19 Codex 执行层也已开源，harness 成为主战场
 
 ## 附录 C：项目复盘文档索引（想深挖的人）
 
@@ -432,25 +434,28 @@ output: {
 
 ## 附录 D：dsh vs Claude Code / Codex —— 优势对比（备查/最可能被问）
 
-> 分享会上最可能被问到的问题。素材来自 dsh 官方仓库实测（`subagent` / `hooks` 包）+ 本项目 8/17–8/26 真实经历。
-> 一句话立场：**不是"谁取代谁"，而是"dsh 是一块能自己铺的地基，CC/Codex 是装好的精装房"**。
+> 分享会上最可能被问到的问题。素材来自 dsh 官方仓库实测（`subagent` / `hooks` 包）+ 本项目 8/17–8/26 真实经历 + 2026-08 公开资料。
+> 一句话立场：**不是"谁取代谁"，dsh 与它们是不同层级的东西**——更完整的五类对比见 [附录 E](#)。
+> 引用材料：OpenAI Codex Harness 开源公告（2026-08-19，[Open Source For You 报道](https://www.opensourceforu.com/2026/08/openai-open-sources-codex-harness)、[云栖网解析](https://www.yunthe.com/openaicodexharness-kai-yuan-kuang-jia-jie-xi-ai-zhi-neng-ti/)、[虎嗅](https://www.huxiu.com/ainews/14691.html)）
 
 ### D-1 一分钟速览（现场回答用）
 
-| 维度 | **dsh（DeepSeek Harness）** | **Claude Code** | **Codex** |
+> ⚠️ **2026-08 重要更新口径**：OpenAI 已于 2026-08-19 把驱动 Codex 的底层执行框架 **Codex Harness 以 Apache-2.0 完全开源**（此前只开源 CLI 前端）。所以"Codex"现在分两层：**执行层（harness，已开源）** 与 **产品/模型层（App/CLI/IDE/模型，仍走 OpenAI API）**。本表按此口径标注。
+
+| 维度 | **dsh（DeepSeek Harness）** | **Claude Code** | **Codex**（执行层已开源，产品闭源） |
 | --- | --- | --- | --- |
-| 开源 | ✅ MIT 全开源 | ❌ 闭源（可装 CLI） | ❌ 闭源（OpenAI 出品） |
-| 定位 | Agent **框架/底座**（harness） | 成品 Agent CLI | 成品 Agent CLI |
-| 内核哲学 | **一切皆插件**（Cordis，可逆副作用） | 黑盒 + 有限的 hook 体系 | 黑盒 + hooks 体系 |
-| 可扩展性 | 模型/工具/会话/UI/调度全是插件，无特权内核 | 只能通过 hooks/skills 有限扩展 | 只能通过 hooks/AGENTS.md 有限扩展 |
+| 开源 | ✅ MIT 全开源 | ❌ 闭源 CLI | ⚠️ **执行框架已开源**（Apache-2.0）/ 产品闭源 |
+| 定位 | Agent **框架/底座**（harness） | 成品 Agent CLI | 成品 Agent CLI + 开源 harness 执行层 |
+| 内核哲学 | **一切皆插件**（Cordis，可逆副作用） | 黑盒 + 有限的 hook 体系 | Rust 核心 harness + 插件扩展 |
+| 可扩展性 | 模型/工具/会话/UI/调度全是插件，无特权内核 | 通过 hooks/skills/subagents 扩展 | 通过 hooks / SDK / app-server 扩展 |
 | 兼容性 | **能跑你已有的 CC/Codex hooks**，能把 CC/Codex 当子 agent | 只认自己的生态 | 只认自己的生态 |
-| 模型自由 | 任意 LLM provider（DeepSeek 等）可插 | 绑定 Anthropic 模型 | 绑定 OpenAI 模型 |
+| 模型自由 | 任意 LLM provider 可插 | 绑定 Anthropic 模型 | 可换基础模型（OpenAI 默认，app-server 支持自定义端点） |
 | 迭代状态 | 开发者预览，破坏性变更多 | 成熟稳定 | 成熟稳定 |
 
 ### D-2 dsh 的六大差异化优势（讲稿，选讲 3 条就够了）
 
 **① 万物皆插件 = 无黑盒，也能改一切**
-Claude Code / Codex 的核心循环是闭源黑盒——你能改的只是外围的 hook/skill。dsh 的模型适配、工具执行、会话存储、定时调度、UI 全是插件，都跑在可逆副作用（`ctx.effect()`）之上：**加载即注册、卸载即逆回，没有特权内核**。想改循环本身？D-3 会说那就是改配置。
+Claude Code 的核心循环是闭源黑盒——你能改的只是外围的 hook/skill。Codex 底层执行框架虽已开源，但产品层仍是黑盒。dsh 的模型适配、工具执行、会话存储、定时调度、UI 全是插件，都跑在可逆副作用（`ctx.effect()`）之上：**加载即注册、卸载即逆回，没有特权内核**。想改循环本身？D-3 会说那就是改配置。
 
 **② 可以复用你已有的 Claude Code / Codex hooks（官方原生兼容）**
 dsh 官方提供了 `hooks-claude-code` 和 `hooks-codex` 两个插件，能读你已有的 `hooks.json` / `.codex/hooks.json`，把配置跑在 dsh 自己的拦截点上：
@@ -466,7 +471,7 @@ dsh 官方提供了 `hooks-claude-code` 和 `hooks-codex` 两个插件，能读�
 dsh 的 `subagent` seam 支持多 provider：`subagent-codex` 能 spawn 一个真实 Codex app-server 子进程，`subagent-claude-code` 能用官方 Claude Agent SDK 起一个真实 CC 子 agent。也就是：**主循环你说了算（dsh 编排），具体执行可以交给 CC/Codex 各自擅长的场景**，而不是被某一家锁死。
 
 **④ 模型自由**
-Claude Code 绑 Anthropic、Codex 绑 OpenAI。dsh 的 LLM 是 seam：`ctx.llm` 上注册哪个 provider 用哪个——DeepSeek、MiniMax、任意 OpenAI 兼容端点都行（本项目就把 DeepSeek 官方 + MiniMax 搜索都接上了）。这对国内团队尤其关键：**不用翻墙、可私有化、成本可控**。
+Claude Code 绑 Anthropic、Codex 产品绑 OpenAI（执行层虽开源、但模型仍走 OpenAI API / 可配自定义端点）。dsh 的 LLM 是 seam：`ctx.llm` 上注册哪个 provider 用哪个——DeepSeek、MiniMax、任意 OpenAI 兼容端点都行（本项目就把 DeepSeek 官方 + MiniMax 搜索都接上了）。这对国内团队尤其关键：**不用翻墙、可私有化、成本可控**。
 
 **⑤ 完全离线/本地优先 + 隐私可审计**
 所有会话是**本地 jsonl 事件日志**，配置是本地 YAML。`session-telemetry-otel` 在 base 里默认 `DISABLED`（`DSH_TELEMETRY_MODE || 'DISABLED'`），只有你显式设环境变量才会上报——**默认不出本机**。沙箱按平台分层：Linux `bwrap`/Landlock、macOS Seatbelt、Windows ACL 受限令牌。代码/提示词默认留在本地，适合有数据合规要求的团队。
@@ -486,3 +491,94 @@ Claude Code 绑 Anthropic、Codex 绑 OpenAI。dsh 的 LLM 是 seam：`ctx.llm` 
 ### D-4 一句话收束（讲稿照读）
 
 > **Claude Code / Codex 是精装房，拎包入住；dsh 是毛坯房 + 一张设计图，你可以按自己的方式装修，还能把精装房里你喜欢的家具（hooks、子 agent）搬进来。** 对想"搭自己的 Agent 工作流"的人来说，后者是独一无二的。这也是为什么我两周内从一个用户变成了给它写插件的人。
+
+---
+
+## 附录 E：完整 Agent 系列对比 —— dsh / Claude Code / Codex / Dify / LangGraph·ADK
+
+> 一次讲清楚五种东西分别是什么、解决什么问题、什么时候选谁。
+> 核心认知：**这五个不是同类竞品，而是 Agent 技术栈里不同层级的东西**——用分层模型理解，比死记功能列表重要一万倍。
+
+### E-0 先建立心智模型：Agent 技术栈的"四层大楼"
+
+参考 LangChain 官方对 Agent 生态的分类（framework / runtime / harness，[原文](https://blog.langchain.com/agent-frameworks-runtimes-and-harnesses-oh-my)），加上实际生态，我把它们放进一个"四层大楼"：
+
+```text
+┌────────────────────────────────────────────────────────────┐
+│ 第 4 层 · 应用平台（可视化/托管/产品化）                          │
+│   Dify / Coze —— 拖拽画布，低代码，给"非纯码农"搭 AI 应用          │
+├────────────────────────────────────────────────────────────┤
+│ 第 3 层 · 成品 Agent（开箱即用的智能体产品）                       │
+│   Claude Code CLI / Codex CLI —— 装完就能干活，绑定自家模型        │
+├────────────────────────────────────────────────────────────┤
+│ 第 2 层 · Harness（智能体运行时/执行层，带整机方案）                 │
+│   dsh / Codex Harness / Claude Agent SDK —— 你要自己组装的底座      │
+├────────────────────────────────────────────────────────────┤
+│ 第 1 层 · 开发框架 / 编排库（代码级，你写逻辑）                     │
+│   LangGraph / Google ADK / LangChain —— 用代码定义 agent 流程       │
+└────────────────────────────────────────────────────────────┘
+```
+
+**一句话记住：**
+- **越低层越灵活、你要写的代码越多**；越高层越省事、越被绑定。
+- **dsh 在 2 层，但向下兼容 3 层**（能把 CC/Codex 当子 agent）、向上能自己搭出 4 层（你自己就是"dsh 上的应用平台"）。
+
+### E-1 五种东西一句话定位
+
+| 工具 | 一句话定位 | 面向谁 | 典型交付物 |
+| --- | --- | --- | --- |
+| **dsh** | 开源的 **Agent harness**——模型/工具/会话/UI 全是插件，你在配置层组装 | 想"搭自己 Agent 底座"的开发者/团队 | 可运行的 Agent 产品 + 你自己的插件 |
+| **Claude Code** | Anthropic 成品 **编码 Agent CLI**，自然语言指挥它干活 | 个人开发者/团队直接用 | 改完的代码（交互式 CLI） |
+| **Codex** | OpenAI 成品编码 Agent + **已开源的 Codex Harness 执行层** | 个人直接使用；团队可嵌入生产 | 改完的代码 / 嵌进产品的 agent |
+| **Dify** | 开源**低代码 LLM 应用平台**（可视化工作流 + RAG + 模型管理） | 非纯码农/产品/业务/中小团队 | 部署成 Web App / API 的 AI 应用 |
+| **LangGraph / Google ADK** | 代码级**开发框架**（LangGraph 图式状态机 / ADK 代码即编排） | 资深开发者自研复杂 agent | 嵌进业务系统的代码库 |
+
+### E-2 八维对比总表
+
+| 维度 | **dsh** | **Claude Code** | **Codex** | **Dify** | **LangGraph / ADK** |
+| --- | --- | --- | --- | --- | --- |
+| 层级 | harness（2） | 成品 CLI（3） | 成品 CLI + harness（2+3） | 应用平台（4） | 开发框架（1） |
+| 开源 | ✅ MIT | ❌ 闭源 | ⚠️ 执行层 Apache-2.0 / 产品闭源 | ✅ 开源（[Apache-2.0](https://github.com/langgenius/dify)） | ✅ 开源（MIT） |
+| 交互形态 | Web UI / CLI / 钉钉桥 / /api | 终端 CLI | 终端 CLI / SDK / app-server | 浏览器画布 + Web App/API | 纯代码（你写程序） |
+| 模型自由 | **任意 provider 可插**（DeepSeek 等） | 绑定 Anthropic | 默认 OpenAI，可换端点 | 多模型面板切换 | 任意（代码层自己定） |
+| 扩展方式 | **一切皆插件**（工具/模型/会话/UI/调度全是插件） | hooks / skills / MCP / subagents | hooks / MCP / SDK / app-server 插件 | 插件 marketplace + 低代码节点 | 代码函数 / 节点 / 自定义工具 |
+| 状态与持久化 | 本地 jsonl 事件日志（事件溯源） | 会话/记忆（闭源管理） | 会话状态（app-server 持久） | 应用数据存储 + 会话 | **checkpointer 持久化执行**（LangGraph 主打） |
+| 人机协同 | 审批/沙箱/权限分层 | 审批、沙箱 | 审批、沙箱、HITL | 人工节点/审批（工作流里） | HITL 节点/断点恢复 |
+| 社区/成熟度 | 开发者预览（2026-08 刚开源） | 极成熟（2025 起） | 成熟 + 执行层刚开源 | 成熟（头部低代码平台） | 成熟（LangChain 生态/Google） |
+| 适合场景 | **搭自研 Agent 底座**、多模型、本地可控 | 个人/团队直接写代码 | 个人直接用 + 嵌入产品 | 企业 AI 应用产品化（客服/RAG/内部助手） | 复杂业务流程、多 agent 编排、生产级状态管理 |
+
+### E-3 dsh 相对每一类的差异化（讲稿重点）
+
+**vs Claude Code / Codex（成品 CLI）—— dsh 是"能自己改的底座"**
+- Claude Code 的核心循环仍是黑盒：你能碰的只是 hooks/skills 这些外围；Codex 执行层（harness）已开源，但其产品/应用层仍是既有框架，扩展同样围绕 hooks / SDK 进行。
+- dsh 连模型、会话存储、工具执行、UI 都是插件——前面 §2 的叠层图就是证据：`dsh-base` 80 行插件、你能 patch 每一行。且 dsh 的"插件化"是**彻底的**（含会话存储/UI/调度），不止 hooks 这种外围。
+- 而且 dsh **兼容**：官方 `hooks-claude-code` / `hooks-codex` 能跑你已有的 hook 配置，`subagent-codex` / `subagent-claude-code` 能把 CC/Codex 当子 agent。迁移不是"搬家"，是"把你家家具搬进新房子"。
+
+**vs Dify（低代码平台）—— dsh 是"开发者版"，Dify 是"业务版"**
+- Dify 解决"非码农也能搭 AI 应用"：可视化工作流、RAG 知识库、应用部署成 Web/API——产品化/客服场景首选。
+- dsh 解决"开发者要一个可编程、可版本化、可深度定制的 Agent 底座"：你没有拖拽画布，但有配置树 + 插件 + /api 协议，程序化控制一切。
+- **互补而非竞争**：你完全可以用 dsh 做后端底座，把它怼到 Dify 的应用层前面（或反过来）。
+
+**vs LangGraph / ADK（开发框架）—— dsh 是"带整机方案的 harness"，框架是"零件库"**
+- LangGraph 给你图、状态机、checkpointer、HITL——**但 agent 长什么样、工具怎么暴露、UI 有没有，全要你自己搭**。
+- ADK 说"代码即编排"（SequentialAgent/ParallelAgent），灵活但同样从零组装。
+- dsh 把框架层 + 成品层中间的**整机**给了你：agent 循环（loop）、会话、沙箱、审批、UI、工具注册表**开箱即用**，你要做的是**换零件而不是造零件**。用我们的例子：我们没写 agent loop，我们写的是 5 个插件 + 一个桥接器。
+
+| 你想要的 | 选谁 |
+| --- | --- |
+| 装完就写代码，不想折腾 | Claude Code / Codex |
+| 业务/产品搭 AI 应用，不写太多代码 | Dify |
+| 自己写复杂 agent 流程，嵌进系统，要状态管理 | LangGraph / ADK |
+| **想要一个可编程、可改一切、可自托管、多模型的 Agent 底座** | **dsh** |
+
+### E-4 一张图：为什么 dsh 值得放进你的技术雷达（讲稿收束）
+
+> **过去你只能在"买精装房（CC/Codex）"和"自己盖房（LangGraph/ADK）"里二选一。dsh 是第三条路：kitset 房——地基、水电、框架都给你搭好，你可以自由换装修、加房间、甚至把别人家的精装房模块搬进来。** 后起的 Codex Harness 也走了 harness 同款路线（Rust 核心 + 插件 + app-server），说明"harness 层"正在成为 Agent 生态的主战场——而 dsh 是这个战场里最彻底的"一切皆插件 + 全开源 + 模型自由"选手。
+
+### E-5 参考资料
+
+- LangChain 官方《Agent Frameworks, Runtimes, and Harnesses – oh my!》：https://blog.langchain.com/agent-frameworks-runtimes-and-harnesses-oh-my
+- OpenAI Codex Harness 开源（2026-08-19）：https://www.opensourceforu.com/2026/08/openai-open-sources-codex-harness ｜ https://www.huxiu.com/ainews/14691.html
+- Google ADK vs LangGraph 对比（2026）- https://dev.to/jangwook_kim_e31e7291ad98/google-adk-vs-langgraph-2026-i-installed-both-and-compared-them-side-by-side-1dld
+- LangGraph 持久化执行官方文档：https://langgraph.org.cn/concepts/durable_execution
+- Dify 官方：https://docs.dify.ai/
