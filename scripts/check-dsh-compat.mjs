@@ -4,10 +4,13 @@
  *
  * 在升级 DSH（或怀疑协议漂移）后，把本项目桥接器实际发送的请求 payload
  * 与宿主当前真实声明的 API schema 做对比，提前暴露：
- *   - 方法不存在（host 已删除/改名某个 Remote 方法）
  *   - payload 使用了宿主 schema 不认识的字段（zod 默认 strip → 静默丢弃）
  *   - 必须字段缺失（host 新增了必填字段，我们没发）
- *   - 方法、字段新增（提醒可选用项）
+ *   - 宿主 schema 不可用（host 升级后 schema 模块路径/形状变化）
+ *
+ * 方法存在性由 schema 模块能否加载到对应 RequestSchema 间接覆盖——
+ * 若某方法在宿主已删除/改名，其 RequestSchema 键会缺失，脚本会以
+ * 「宿主 schema 不可用」报告该方法。
  *
  * 为什么需要：zod 的 `.parse()` 默认会在**边界 strip 未知字段**——我们发
  * 一个 host 不认识的字段不会报错，只会被静默忽略（上一轮的 `limit` vs
@@ -121,8 +124,8 @@ const EXPECTED_CALLS = {
     note: '字段以宿主 sessionHistoryRequestSchema 为准（曾用 limit→maxMessages 修正）',
   },
   'session.prompt': {
-    fields: ['sessionId', 'mode', 'content', 'clientTimeZone'],
-    note: 'content 为 [{type:"text",text}]；mode 为 queue/steer',
+    fields: ['sessionId', 'mode', 'content'],
+    note: 'content 为 [{type:"text",text}]；mode 为 queue/steer；clientTimeZone 为宿主可选字段（当前未发送，用默认）',
   },
   'workspace.list': {
     fields: [],
@@ -148,7 +151,6 @@ function collectIn(dir, collected) {
     if (e.name.startsWith('.') || e.name === 'node_modules') continue;
     const p = join(dir, e.name);
     if (e.isDirectory()) {
-      if (/^(node_modules|\.git)$/.test(e.name)) continue;
       collectIn(p, collected);
     } else if (e.isFile() && /\.(js|mjs)$/.test(e.name)) {
       collectSourceFile(p, collected);
@@ -231,6 +233,7 @@ function checkMethod(method, expected, hostSchema, sourceFields) {
     requiredFields: hostSchema ? Object.keys(zodSchemaShape(hostSchema) || {})
       .filter((k) => hostSchema.shape[k] && hostSchema.shape[k].isOptional && !hostSchema.shape[k].isOptional()) : null,
     expectedFields: expected?.fields ?? [],
+    note: expected?.note ?? null,
     sourceFields: sourceFields ? [...sourceFields].sort() : null,
     issues: [],
     notes: [],
@@ -287,6 +290,7 @@ function formatReport(reports, meta, opts) {
       lines.push(`   (宿主 schema 不可用)`);
     }
     if (r.expectedFields?.length) lines.push(`   项目发送: ${r.expectedFields.join(', ')}`);
+    if (r.note) lines.push(`   ℹ️  说明: ${r.note}`);
     for (const i of r.issues) { lines.push(`   ⚠️  ${i}`); issues.push(r.method + ': ' + i); }
     for (const n of r.notes) lines.push(`   ℹ️  ${n}`);
     lines.push('');
@@ -351,11 +355,7 @@ async function main() {
   }
 
   const text = formatReport(reports, meta, { json: wantJson });
-  if (wantJson) {
-    console.log(text);
-  } else {
-    console.log(text);
-  }
+  console.log(text);
   const hasIssues = reports.some((r) => r.issues.length > 0);
   process.exit(hasIssues ? 1 : 0);
 }

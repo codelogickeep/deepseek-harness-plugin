@@ -82,13 +82,33 @@ node scripts/check-plugin.mjs plugins/browser-reader/browser-reader.mjs
 
 ### install-plugins.mjs（安装门）
 安装每个插件前**先对仓库源码跑自检**；失败则**跳过安装并报错**（不写入宿主、不引用 patch），
-杜绝「装上了一个会让 DSH 起不来」的插件。三个现存插件（browser-reader / cron-scheduler /
-minimax-search）均已在自检门后通过。
+杜绝「装上了一个会让 DSH 起不来」的插件。四个宿主插件（browser-reader / cron-scheduler /
+minimax-search / ui-enhance）均已在自检门后通过。
 
 ### stub ctx 覆盖面（避免误伤合法插件）
 check-plugin 的 stub 覆盖常见注入服务：`tools`(真校验) / `web` / `fs` / `agents` / `llm` /
 `scheduler` / `logger` / `command` / `settings` / `jobs`。**minimax-search 依赖 `ctx.web`，
 第一版 stub 没覆盖被误报，已修复**——经验：stub 必须覆盖插件 `inject` 声明里的服务。
+
+### check-dsh-compat.mjs（升级适配防线）
+
+上面两道防线都防「插件让 DSH 起不来」；这条防的是另一种静默事故：**升级 DSH 后 wire 契约漂移**。
+宿主 API schema 的 zod `.parse()` 默认 **strip 未知字段**——桥接器发一个宿主不认识的字段
+（如旧版的 `limit` 已是新版的 `maxMessages`）不会报错，只会被静默丢弃，翻页退化为默认值，
+行为悄悄变错。
+
+`check-dsh-compat` 直接用宿主真实 schema（`~/.dsh/profiles` 锚点解析
+`dsh-host-apiproxy`）对照 `src/` 发起的每个 `/api` 方法：
+
+```bash
+npm run check:dsh-compat                    # 默认：全量对照，破坏性差异退出码 1
+npm run check:dsh-compat -- --only session.history  # 只看某个方法
+npm run check:dsh-compat -- --json                  # JSON 报告（CI 消费）
+```
+
+检出两类破坏性差异：① 项目发送了宿主 schema 不认识的字段（会被 strip 静默丢弃）；
+② 宿主要求必填但项目缺失的字段。升级 DSH 后跑一遍即可发现协议漂移（`limit→maxMessages`
+修复即由本检查发现与回归验证）。
 
 ---
 
@@ -101,9 +121,10 @@ check-plugin 的 stub 覆盖常见注入服务：`tools`(真校验) / `web` / `f
 - 若要进正规程隔离：需要 DSH 支持「插件宿主进程 + IPC」，是框架级改造（非插件层能解决），
   成本高、当前不建议。
 
-**务实结论**：在官方提供进程级隔离前，「部署前自检 + 装前门禁 + patch 引用纪律」是性价比
-最高的防线；三者已在本仓库落地（`scripts/check-plugin.mjs` + `scripts/install-plugins.mjs` +
-LESSONS.md 3.4 的 patch 铁律）。
+**务实结论**：在官方提供进程级隔离前，「部署前自检 + 装前门禁 + patch 引用纪律 +
+升级契约检查」是性价比最高的防线组合；四者已在本仓库落地
+（`scripts/check-plugin.mjs` + `scripts/install-plugins.mjs` +
+`scripts/check-dsh-compat.mjs` + LESSONS.md 3.4 的 patch 铁律）。
 
 ---
 
