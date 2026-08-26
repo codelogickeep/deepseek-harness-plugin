@@ -194,6 +194,23 @@ export class Bridge {
     return msg?.msgtype === 'text' ? msg?.text?.content : '';
   }
 
+  /**
+   * 解析 cwd 对应的工作区并返回 workspaceId（无则创建）。
+   * 让桥接器创建的新会话能挂载进工作区，/list 按工作区分组时可见。
+   * 解析失败（网络/权限）不致命：返回 null 时回退为仅传 cwd 的旧行为。
+   */
+  async _resolveWorkspaceId(cwd) {
+    try {
+      const r = await this.dsh.ensureWorkspace(cwd);
+      if (r.ok && r.workspaceId) return r.workspaceId;
+      this.log(`工作区解析失败(fallback 无挂载)：${r.error?.message || '未知'}`);
+      return null;
+    } catch (err) {
+      this.log(`工作区解析异常(fallback 无挂载)：${err.message}`);
+      return null;
+    }
+  }
+
   async _handleNewCommand(msg, text) {
     // /new [绝对路径]：新建 DSH 会话并设为投递目标；/new <普通文本>：新建会话后把文本作为首条消息提交。
     const convId = msg.conversationId;
@@ -201,8 +218,10 @@ export class Bridge {
     // 仅当参数是绝对路径时才作为 cwd；否则按普通文本处理，避免聊天内容被误当路径导致创建失败
     const argIsPath = /^(?:\/|[A-Za-z]:[\\/])/.test(arg);
     const cwd = argIsPath ? arg : this.config.mapping.sessionCwd;
+    // 解析工作区让新会话挂载（/list 按工作区分组可见）；解析失败回退为旧行为
+    const workspaceId = await this._resolveWorkspaceId(cwd);
     const result = await this.dsh.createSession({
-      cwd,
+      ...(workspaceId ? { workspaceId } : { cwd }),
       agentPreset: this.config.mapping.agentPreset,
     });
     if (result.ok && result.sessionId) {
@@ -541,8 +560,10 @@ export class Bridge {
     }
 
     // 默认：为该钉钉会话创建独立 DSH 会话
+    // 解析工作区让新会话挂载（/list 按工作区分组可见）；解析失败回退为旧行为
+    const workspaceId = await this._resolveWorkspaceId(this.config.mapping.sessionCwd);
     const result = await this.dsh.createSession({
-      cwd: this.config.mapping.sessionCwd,
+      ...(workspaceId ? { workspaceId } : { cwd: this.config.mapping.sessionCwd }),
       agentPreset: this.config.mapping.agentPreset,
     });
     if (!result.ok || !result.sessionId) return null;

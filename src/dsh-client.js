@@ -90,13 +90,36 @@ export class DSHClient extends EventEmitter {
   }
 
   /**
+   * 确保某路径存在对应工作区：已存在则返回其 workspaceId，否则创建。
+   * 用于 session.create 前解析 workspaceId，使新会话挂载进工作区（/list 可见）。
+   * @returns {Promise<{ok:boolean, workspaceId?:string, created?:boolean, error?:object}>}
+   */
+  async ensureWorkspace(path) {
+    if (!path) return { ok: false, error: { code: 'internal', message: 'ensureWorkspace requires a path' } };
+    const { items } = await this.listWorkspaces();
+    // 精确路径匹配（注意路径结尾斜杠差异）
+    const norm = (p) => String(p).replace(/[/\\]+$/, '');
+    const hit = items.find((w) => norm(w.path) === norm(path));
+    if (hit) return { ok: true, workspaceId: hit.workspaceId, created: false };
+    const r = await this.callResult('workspace.create', { path });
+    if (r.ok) return { ok: true, workspaceId: r.value?.workspace?.workspaceId, created: true };
+    return { ok: false, error: r.error };
+  }
+
+  /**
    * 创建会话。可指定稳定 sessionId（同一 id + cwd 幂等）。
+   * 传 workspaceId 时新会话会挂载到该工作区（进入 workspace.sessionIds，/list 可见）；
+   * workspaceId 与 cwd 互斥（DSH schema 约束），两者都传时优先 workspaceId。
    * @returns {Promise<{ok:boolean, sessionId?:string, error?:object}>}
    */
-  async createSession({ sessionId, cwd, agentPreset } = {}) {
+  async createSession({ sessionId, cwd, agentPreset, workspaceId } = {}) {
     const payload = {};
     if (sessionId) payload.sessionId = sessionId;
-    if (cwd) payload.cwd = cwd;
+    if (workspaceId) {
+      payload.workspaceId = workspaceId;
+    } else if (cwd) {
+      payload.cwd = cwd;
+    }
     if (agentPreset) payload.agentPreset = agentPreset;
     const r = await this.callResult('session.create', payload);
     if (r.ok) return { ok: true, sessionId: r.value.sessionId };

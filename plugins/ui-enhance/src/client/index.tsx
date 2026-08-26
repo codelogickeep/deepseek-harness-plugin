@@ -555,6 +555,8 @@ interface TreeEntry {
   path: string
   type: 'dir' | 'file'
   git: string | null
+  /** 是否被 git 管理（跟踪或未被忽略）。 */
+  managed: boolean
   size: number | null
 }
 
@@ -643,8 +645,9 @@ function FileTreePanel(props: { sessionId?: string }): React.ReactElement {
         const next = (d.entries ?? []).map((e): TreeNode => {
           const old = oldMap.get(e.path)
           if (old) {
-            // 保留展开/已加载子节点，仅同步 git 字段
-            return old.entry.git === e.git ? old : { ...old, entry: { ...old.entry, git: e.git ?? null } }
+            // 保留展开/已加载子节点，仅同步 git 与 managed 字段
+            if (old.entry.git === e.git && old.entry.managed === e.managed) return old
+            return { ...old, entry: { ...old.entry, git: e.git ?? null, managed: e.managed } }
           }
           // 新增条目（文件新建）
           return { entry: e, loaded: false, children: [], expanded: false, loading: false }
@@ -769,6 +772,11 @@ function FileTreePanel(props: { sessionId?: string }): React.ReactElement {
       const indent = { paddingLeft: 10 + depth * 16 }
       const isDir = entry.type === 'dir'
       const isSel = selPath === `/${entry.path}`
+      // 颜色区分：有 git 管理 = 深色正常；无 git 管理（忽略/未跟踪） = 更浅的灰蓝色
+      const managed = entry.managed !== false
+      const nameColor = managed ? '#0f1115' : '#8b93a1'
+      // 目录箭头（两条线空心 chevron，非三角；展开朝下、收起朝右）；文件留白占位保持对齐
+      const arrowColor = managed ? '#444b57' : '#aab1bc'
       return (
         <React.Fragment key={entry.path}>
           <div
@@ -787,17 +795,29 @@ function FileTreePanel(props: { sessionId?: string }): React.ReactElement {
               cursor: isDir ? 'pointer' : 'default',
               borderRadius: 8,
               fontSize: 13,
-              color: '#0f1115',
+              color: nameColor,
               whiteSpace: 'nowrap',
               background: isSel ? 'rgba(37, 99, 235, 0.08)' : 'transparent',
             }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = isSel ? 'rgba(37, 99, 235, 0.12)' : 'rgba(0,0,0,0.05)' }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = isSel ? 'rgba(37, 99, 235, 0.08)' : 'transparent' }}
           >
-            <span style={{ fontSize: 10, width: 12, color: '#9aa1ab', flexShrink: 0 }}>
-              {isDir ? (node.expanded ? '▾' : '▸') : ''}
+            {/* 目录展开箭头：两条线空心 chevron，更醒目；文件留白占位对齐 */}
+            <span style={{ width: 20, flexShrink: 0, display: 'inline-flex', justifyContent: 'center', alignItems: 'center', lineHeight: 0 }}>
+              {isDir ? (
+                <svg
+                  width="18" height="18" viewBox="0 0 24 24" style={{ display: 'block', transition: 'transform 0.12s ease' }}
+                  aria-hidden="true"
+                >
+                  {node.expanded
+                    ? <path d="M6 9 l6 6 l6 -6" fill="none" stroke={arrowColor} strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
+                    : <path d="M9 6 l6 6 l-6 6" fill="none" stroke={arrowColor} strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />}
+                </svg>
+              ) : (
+                <span style={{ width: 20 }} />
+              )}
             </span>
-            <span style={{ fontSize: 13, flexShrink: 0 }}>{isDir ? '📁' : '📄'}</span>
+            <span style={{ fontSize: 13, flexShrink: 0, opacity: managed ? 1 : 0.7, filter: managed ? 'none' : 'grayscale(60%)' }}>{isDir ? '📁' : '📄'}</span>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{entry.name}</span>
             {badge ? (
               <span style={{

@@ -186,11 +186,42 @@ function loadGitSummary(cwd: string): { branch: string | null, modified: number,
   return { branch, modified, added, deleted, untracked, lastCommit, ahead }
 }
 
+/** tree 条目：git 变更加 managed（是否被 git 管理/跟踪）以区分「有/无 git 管理」。 */
+interface TreeEntry {
+  name: string
+  path: string
+  type: 'dir' | 'file'
+  git: string | null
+  /** 是否被 git 管理（跟踪或未被忽略）。目录被忽略 ⇒ 整棵子树无 git 管理。 */
+  managed: boolean
+  size: number | null
+}
+
+/**
+ * 批量判定一组相对路径是否被 git 忽略（无 git 管理）。
+ * 用 `git check-ignore --stdin -z` 一次判定；返回被忽略的路径集合。
+ * 注意：-z 模式下输入也需 NUL 分隔（git ~2.5x 行为），换行分隔会静默失败。
+ * 非 git 仓库/命令失败时返回空集（视为全部被管理，天然安全）。
+ */
+function loadIgnoredPaths(cwd: string, paths: string[]): Set<string> {
+  const ignored = new Set<string>()
+  if (!cwd || paths.length === 0) return ignored
+  const input = paths.join('\0') + '\0'
+  const r = spawnSync('git', ['check-ignore', '--stdin', '-z'], {
+    cwd, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 8000,
+  })
+  if (r.status !== 0 && r.status !== 1) return ignored
+  for (const p of r.stdout.split('\0')) {
+    if (p) ignored.add(p)
+  }
+  return ignored
+}
+
 /**
  * 列出工作区根下 dir（相对路径）的单层目录内容。
- * 返回 { name, path, type, git, size }[]（目录在前，字母序）。
+ * 返回 { name, path, type, git, managed, size }[]（目录在前，字母序）。
  */
-async function readTree(root: string, relDir: string): Promise<{ name: string, path: string, type: 'dir' | 'file', git: string | null, size: number | null }[]> {
+async function readTree(root: string, relDir: string): Promise<TreeEntry[]> {
   const dirAbs = resolve(root, relDir)
   // containment：必须落在 root 内
   if (dirAbs !== root && !dirAbs.startsWith(root + sep)) {
@@ -198,17 +229,36 @@ async function readTree(root: string, relDir: string): Promise<{ name: string, p
   }
   const entries = await fsp.readdir(dirAbs, { withFileTypes: true })
   const gitMap = loadGitStatus(root)
-  const out: { name: string, path: string, type: 'dir' | 'file', git: string | null, size: number | null }[] = []
+  const rels: string[] = []
   for (const ent of entries) {
-    if (ent.name === '.git' || ent.name === 'node_modules' || ent.name.startsWith('.')) continue
+    if (ent.name === '.DS_Store') continue
+    rels.push(relDir ? join(relDir, ent.name) : ent.name)
+  }
+  const ignored = loadIgnoredPaths(root, rels)
+  const out: TreeEntry[] = []
+  for (const ent of entries) {
     const rel = relDir ? join(relDir, ent.name) : ent.name
     if (ent.isDirectory()) {
-      if (SKIP_DIRS.has(ent.name)) continue
-      out.push({ name: ent.name, path: rel, type: 'dir', git: gitMap.get(rel) ?? null, size: null })
+      // 只隐藏 .git / node_modules 与构建产物、缓存等噪音目录（SKIP_DIRS）；
+      // 其余点开头目录（.github/.claude/.vscode/.dev-flow 等）正常展示。
+      if (SKIP_DIRS.has(ent.name) || ent.name === '.DS_Store') continue
+      out.push({
+        name: ent.name, path: rel, type: 'dir',
+        git: gitMap.get(rel) ?? null,
+        managed: !ignored.has(rel),
+        size: null,
+      })
     } else if (ent.isFile()) {
+      // 隐藏 macOS 元数据文件；其余点开头文件（.env/.gitignore/.mcp.json 等）正常展示。
+      if (ent.name === '.DS_Store') continue
       let size: number | null = null
       try { size = (await fsp.stat(join(dirAbs, ent.name))).size } catch { /* ignore */ }
-      out.push({ name: ent.name, path: rel, type: 'file', git: gitMap.get(rel) ?? null, size })
+      out.push({
+        name: ent.name, path: rel, type: 'file',
+        git: gitMap.get(rel) ?? null,
+        managed: !ignored.has(rel),
+        size,
+      })
     }
   }
   // 目录在前，各自字母序
