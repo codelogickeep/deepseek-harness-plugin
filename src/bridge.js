@@ -462,7 +462,7 @@ export class Bridge {
     const sessions = (await this.dsh.listSessions().catch(() => [])).filter((s) => !archivedSet.has(s.sessionId));
     for (const s of sessions) {
       const sid = s.sessionId;
-      const r = await this.dsh.sessionHistory(sid, { limit: 500, maxPages: 2 }).catch(() => null);
+      const r = await this.dsh.sessionHistory(sid, { maxMessages: 500, maxPages: 2 }).catch(() => null);
       if (r?.ok && r.events.some((e) => e.event?.type === 'schedule/change')) return sid;
     }
     return null;
@@ -480,7 +480,7 @@ export class Bridge {
     const byId = new Map();
     let found = false;
     for (const s of sessions) {
-      const r = await this.dsh.sessionHistory(s.sessionId, { limit: 2000, maxPages: 6 }).catch(() => null);
+      const r = await this.dsh.sessionHistory(s.sessionId, { maxMessages: 2000, maxPages: 6 }).catch(() => null);
       if (!r?.ok) continue;
       const events = r.events || [];
       const changes = events

@@ -58,7 +58,7 @@ async function verify() {
   const sessions = ['session-12367081-a592-4494-9bd0-364eca9c3998', 'session-f8605eda-94e9-4993-b64a-e51e71c186b9']
   for (const sid of sessions) {
     try {
-      const r = await call('session.history', { sessionId: sid, limit: 2 })
+      const r = await call('session.history', { sessionId: sid, maxMessages: 2 })
       results.push(`${sid.slice(0, 20)} => history ${r?.ok ? 'OK' : `FAIL ${JSON.stringify(r?.error)?.slice(0, 100)}`}`)
     } catch (e) {
       results.push(`${sid.slice(0, 20)} => history ERROR ${e.message}`)

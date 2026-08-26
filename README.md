@@ -288,6 +288,11 @@ DSH 会话产生**非用户触发的消息**（自研 `cron-scheduler` 或官方
 # 新增/修改宿主插件后、重启 DSH 前，先跑加载期自检（防"改完 DSH 起不来"）
 npm run check:plugin -- plugins/browser-reader/browser-reader.mjs
 
+# 升级 DSH 后、确认桥接器与最新宿主 API wire 契约兼容（防"limit→maxMessages"类静默丢弃事故）
+npm run check:dsh-compat          # 用宿主真实 schema 校验 src/ 发起的每个 /api 方法
+npm run check:dsh-compat -- --only session.history   # 只看某个方法
+npm run check:dsh-compat -- --json                    # JSON 报告（CI 消费）
+
 # 只装 DSH 宿主插件（MiniMax 搜索、cron-scheduler、browser-reader）
 npm run install:plugins
 
@@ -374,6 +379,7 @@ npm run install:plugins
 ├── scripts/
 │   ├── install-plugins.mjs      # 脚手架：整目录同步 plugins/<name>/ → 宿主 plugins/<name>/（含加载期自检门 + 自动补 patch 引用）
 │   ├── check-plugin.mjs         # 脚手架：插件加载期自检（真实 DSH schema 校验器，重启前必跑）
+│   ├── check-dsh-compat.mjs     # 脚手架：升级 DSH 后校验桥接器 API wire 契约（宿主真实 schema 对照）
 │   ├── install-flash-preset.mjs # 脚手架：渲染并安装 flash-worker preset
 │   └── setup.mjs                # 一键式：装插件 + 装 preset +（可选）切默认
 ├── test/                    # 集成测试（需要 DSH 在线）

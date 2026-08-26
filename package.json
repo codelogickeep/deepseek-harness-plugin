@@ -12,6 +12,7 @@
     "install:plugins": "node scripts/install-plugins.mjs",
     "install:plugins:all": "node scripts/install-plugins.mjs",
     "check:plugin": "node scripts/check-plugin.mjs",
+    "check:dsh-compat": "node scripts/check-dsh-compat.mjs",
     "install:flash-worker": "node scripts/install-flash-preset.mjs",
     "setup": "node scripts/setup.mjs"
   },
