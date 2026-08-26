@@ -413,6 +413,7 @@ output: {
 | ui-enhance 架构与事故教训 | [UI-ENHANCE.md](./UI-ENHANCE.md) |
 | flash-worker「pro 指挥 flash 执行」 | [FLASH-WORKER.md](./FLASH-WORKER.md) |
 | browser-reader 浏览器阅读 | [BROWSER-READER.md](./BROWSER-READER.md) |
+| **DSH 做 ERP Agent 的深度分析 + 三层权限具体设计** | [DSH-ERP-AGENT-ANALYSIS.md](./DSH-ERP-AGENT-ANALYSIS.md) |
 
 ### 官方 git 库设计态文档导航（`~/OpenProject/deepseek-harness/docs/`）
 
