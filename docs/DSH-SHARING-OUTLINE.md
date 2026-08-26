@@ -218,7 +218,7 @@ export function apply(ctx) {
 | **vs 轻量工具**（openclaw 个人助理） | dsh **更轻**——openclaw 是"个人助理 + 一堆聊天渠道"的重型成品；dsh 是内核 + 配置树，不带预设业务，你要什么叠什么 | openclaw 定位 personal AI assistant（20+ 渠道）；dsh = Agent 运行时底座 |
 | **vs Agent SDK**（LangGraph/ADK） | dsh **完整度高**——SDK 给你零件库（图/状态/编排），dsh 给你整机 + 图纸：agent 循环、会话、沙箱、审批、UI、/api 全内置，不用从零焊 | SDK 要自己搭 loop/审计/UI；dsh ~80 行 base 插件开箱即用 |
 | **vs 闭源成品**（CC/Codex） | dsh **更开放 + 守通用协议**——全开源、可自托管、模型自由；对外用通用 /api 协议（session.prompt + events.mux，与浏览器/钉钉/你自己的系统同一套），不被锁在自家生态 | `/api` 外部协议官方内置；CC/Codex 绑自家 |
-| **多 agent × 多模型**（重要） | dsh **跨厂商自由组合**——主 agent 用 DeepSeek、子 agent 用本地/Ollama/其他厂商，或把 Codex/CC 当子 agent。CC/Codex 也能给子 agent 换自家档位模型（CC: haiku/sonnet/opus；Codex: gpt-5.4 系列），但**换不了别家模型** | CC/Codex 子 agent 限自家模型（官方文档实证）；dsh subagent seam 支持任意 provider |
+| **多 agent × 多模型**（对齐口径） | 开源 harness（dsh、openclaw 等）**都支持跨厂商多模型**；dsh 是其一，还能把 Codex/CC 当子 agent。CC/Codex 也能给子 agent 换自家档位模型（CC: haiku/sonnet/opus；Codex: gpt-5.4），但换不了别家——**被排除的是闭源成品** | dsh subagent 任意 provider；openclaw `agents.list[].subagents.model` 同样任意 provider（都已实证）|
 | **难度/灵活性** | **插件一等公民 = 定制不难、又不失灵活**——加一个 AI 能力 = 一个插件（几分钟）；改到深层（模型/会话/UI）也是插件，不 hack 内核 | 我们 6 类能力全是插件长出来的，见 §3 |
 
 **一句话收束（讲稿照读）**：
@@ -366,9 +366,9 @@ output: {
 - **主 agent（pro 模型）** 负责规划、拆任务、决策、review——它想清楚「做什么」；
 - **flash 子 agent（flash 模型）** 通过 `flash_agent` 工具接管具体编码——它动手「做」。
 
-这是 DSH 的 subagent seam 原生能力：**per-agent 模型指定，且跨厂商自由组合**——主 pro 和子 flash 来自不同 provider，都是任意厂商的任意模型。我把它做成了一个可一键安装的 **agent preset**（`flash-worker`），模板参数化，不把个人模型 id 写死进仓库。**实际感受是：复杂任务的质量上来了，整体成本降下来了。**
+这是 DSH 的 subagent seam 原生能力：**per-agent 模型指定，可跨厂商组合**（与 openclaw 同为开源多模型 harness）——主 pro 和子 flash 来自不同 provider，都是任意厂商的任意模型。我把它做成了一个可一键安装的 **agent preset**（`flash-worker`），模板参数化，不把个人模型 id 写死进仓库。**实际感受是：复杂任务的质量上来了，整体成本降下来了。**
 
-> 补充口径（防被懂行的人打脸）：Claude Code / Codex 也支持"给每个子 agent 配不同模型"（CC 限 haiku/sonnet/opus、Codex 限 gpt-5.4 系列——都是自家档位）；**dsh 的差异是子 agent 可选任意厂商任意模型**（主 DeepSeek + 子本地/Ollama，甚至把 Codex/CC 当子 agent）。详见附录 D-2 ③。
+> 补充口径（防被懂行的人打脸）：**"多 agent 配不同模型"不是 dsh 独有**——Claude Code（限 haiku/sonnet/opus）、Codex（限 gpt-5.4 系列）能配自家档位；openclaw 也能且和 dsh 一样跨厂商任意模型。真正被拦在"自家模型"里的是 CC/Codex 这类闭源成品；dsh 作为开源 harness 是"能做到多模型"的之一，额外还支持把 Codex/CC 当子 agent。详见附录 D-2 ③。
 
 ### 6.2 可移植性：一条命令装好（讲稿）
 
@@ -493,13 +493,14 @@ dsh 官方提供了 `hooks-claude-code` 和 `hooks-codex` 两个插件，能读�
 
 映射是官方的（如 CC `PreToolUse` → `tools/pre-execute`，`Stop` → `agent/turn-stopping`）。**迁移成本 = 零**：你在 CC/Codex 上沉淀的安全/规范 hook 资产，不用重写。
 
-**③ 多 agent × 多模型：dsh 是"跨厂商自由组合"（重要特性）**
-先说清楚：**Claude Code 和 Codex 也支持"为每个子 agent 指定不同模型"**——CC 可给子代理选 `haiku/sonnet/opus` 三档（文件 `.claude/agents/*.md` 或 SDK `agents` 参数），Codex 可给每个 agent 配 `gpt-5.4` 系列 + reasoning effort（`~/.codex/agents/*.toml`）。所以"多 agent 配不同模型"**不是 dsh 独有**。
-但三者差异在**模型范围**：
-- CC 子代理只能在 **Anthropic 自家三档**里选；
-- Codex 子代理只能在 **OpenAI 自家系列**里选；
-- **dsh 的 subagent seam 支持"任意 provider 的任意模型"**：主 agent 用 DeepSeek、子 agent 用本地 Ollama / MiniMax / 任意 OpenAI 兼容端点——**跨厂商自由组合**；还能把外部 Codex、Claude Code 当子 agent（`subagent-codex` / `subagent-claude-code` provider）。这是闭源工具做不到的。
-一句话：**CC/Codex 是"多 agent + 自家不同档位模型"；dsh 是"多 agent + 跨厂商任意模型"**——后者才是真正开放的编排。
+**③ 多 agent × 多模型：这是"开源 harness 的共性"，dsh 只是其一（不夸大）**
+先对齐事实：**"多 agent 配不同模型"任何一个成熟工具都能做**——
+- Claude Code：子代理可指定 `haiku/sonnet/opus` 三档（文件 `.claude/agents/*.md` 或 SDK `agents` 参数）；
+- Codex：每个 agent 可配 `gpt-5.4` 系列 + reasoning effort（`~/.codex/agents/*.toml`）；
+- **openclaw：per-agent 模型 + per-agent 子 agent 模型，且跨厂商任意 provider**（开源多模型网关，`agents.list[].subagents.model`、`agents.defaults.models["provider/model"]`）；
+- **dsh：subagent seam 的 per-agent 模型，同样跨厂商任意 provider**，还能把外部 Codex/CC 当子 agent（`subagent-codex` / `subagent-claude-code`）。
+
+所以准确的分界线是：**CC/Codex 被拦在"自家模型档位"里（换不了别家）；而开源 harness（dsh、openclaw 这类）都支持跨厂商多模型**。dsh 在这一项上不是独有，但也不输——主 agent 用 DeepSeek、子 agent 用本地 Ollama，是 dsh 和 openclaw 都能做的事；dsh 额外的点是"把 CC/Codex 当子 agent"的桥接能力。
 
 **④ 模型自由（单 agent 层面也一样）**
 主 agent 层面：Claude Code 绑 Anthropic（可通过 `ANTHROPIC_BASE_URL` 整体换成 DeepSeek 等——但那是"全体换"，不是 per-agent）；Codex 绑 OpenAI 系列（app-server 可配自定义端点）。dsh 的 LLM 是 seam：`ctx.llm` 上注册哪个 provider 用哪个——DeepSeek、MiniMax、任意 OpenAI 兼容端点都行（本项目就把 DeepSeek 官方 + MiniMax 搜索都接上了）。这对国内团队尤其关键：**不用翻墙、可私有化、成本可控**。
