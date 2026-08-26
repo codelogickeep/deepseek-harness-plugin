@@ -371,10 +371,13 @@ output: {
 2. **生态早期的机会**：开发者预览版迭代极快，破坏性变更多，但先入场的人沉淀的方法论会成为稀缺经验；
 3. **方法论比工具更重要**：三次崩溃换来的「部署前自检」「绝不写自定义事件」「状态落沙箱可写根」——这些经验**不绑定 dsh**，任何 Agent 框架插件开发都通用。
 
+> 如果现场有人问「那跟 Claude Code / Codex 比呢？」——一句话带过，详见附录 D：
+> **「它们是精装房，dsh 是毛坯房+设计图——你能把 CC/Codex 的 hooks 搬进来、把它们当子 agent，还能自由换模型、全本地。对想搭自己工作流的人来说，这是独一份的。」**
+
 **展望**：等官方出进程级插件隔离后（现在 `cordis:group` 只隔离服务实例、不隔离崩溃），第三方插件质量门槛会降低；在那之前，我仓库里的这套「自检 + 门禁 + 契约检查」就是性价比最高的防线。
 
 **Q&A 引导**（如果有人问）：
-- 「DSH 和 Cursor/Agent 框架有什么区别？」→ 一切皆插件 + 可逆副作用 + 事件溯源，可组合性远高于闭源 IDE；
+- 「DSH 和 Claude Code / Codex 有什么区别？」→ **完整对比看本文最后的「附录 D」**。一句话：CC/Codex 是精装房，dsh 是毛坯房+设计图——dsh 能跑你已有的 CC/Codex hooks、能把它们当子 agent，还能自由换模型、全本地；
 - 「自己写一个插件要多久？」→ 读一遍 `article`（5 分钟），跟着 checklist 写，工具型插件一个晚上能出活。
 
 ---
@@ -385,7 +388,7 @@ output: {
 | --- | --- | --- |
 | 只剩 10 分钟 | §6 可移植性、§3.3 亮点 B | §2 设计态 2.1–2.4（这是听懂全场的地基）、§4 三个事故 |
 | 只剩 7 分钟 | §3 全家福合并进 §1，§2.4 时序图口头带过 | §2.1–2.3（叠层图+最小插件）、§4 + §5 |
-| 要 20 分钟 | §2.4 展开官方时序图逐帧讲 + 现场演示（更稳：现场开 dsh 展示文件树实时刷新 + web_read 读页面） | 全部保留，Q&A 延长 |
+| 要 20 分钟 | §2.4 展开官方时序图逐帧讲 + 现场演示（更稳：现场开 dsh 展示文件树实时刷新 + web_read 读页面）+ 附录 D 对比展开讲 | 全部保留，Q&A 延长 |
 
 ## 附录 B：关键数据一览（背稿可用）
 
@@ -424,3 +427,62 @@ output: {
 
 > 引用官方仓库文档时注意：上游 `docs/` 的 `.zh.md` 中文版经双语配对维护（英文是生成源），
 > 讲稿里的概念以官方中文版为准。
+
+---
+
+## 附录 D：dsh vs Claude Code / Codex —— 优势对比（备查/最可能被问）
+
+> 分享会上最可能被问到的问题。素材来自 dsh 官方仓库实测（`subagent` / `hooks` 包）+ 本项目 8/17–8/26 真实经历。
+> 一句话立场：**不是"谁取代谁"，而是"dsh 是一块能自己铺的地基，CC/Codex 是装好的精装房"**。
+
+### D-1 一分钟速览（现场回答用）
+
+| 维度 | **dsh（DeepSeek Harness）** | **Claude Code** | **Codex** |
+| --- | --- | --- | --- |
+| 开源 | ✅ MIT 全开源 | ❌ 闭源（可装 CLI） | ❌ 闭源（OpenAI 出品） |
+| 定位 | Agent **框架/底座**（harness） | 成品 Agent CLI | 成品 Agent CLI |
+| 内核哲学 | **一切皆插件**（Cordis，可逆副作用） | 黑盒 + 有限的 hook 体系 | 黑盒 + hooks 体系 |
+| 可扩展性 | 模型/工具/会话/UI/调度全是插件，无特权内核 | 只能通过 hooks/skills 有限扩展 | 只能通过 hooks/AGENTS.md 有限扩展 |
+| 兼容性 | **能跑你已有的 CC/Codex hooks**，能把 CC/Codex 当子 agent | 只认自己的生态 | 只认自己的生态 |
+| 模型自由 | 任意 LLM provider（DeepSeek 等）可插 | 绑定 Anthropic 模型 | 绑定 OpenAI 模型 |
+| 迭代状态 | 开发者预览，破坏性变更多 | 成熟稳定 | 成熟稳定 |
+
+### D-2 dsh 的六大差异化优势（讲稿，选讲 3 条就够了）
+
+**① 万物皆插件 = 无黑盒，也能改一切**
+Claude Code / Codex 的核心循环是闭源黑盒——你能改的只是外围的 hook/skill。dsh 的模型适配、工具执行、会话存储、定时调度、UI 全是插件，都跑在可逆副作用（`ctx.effect()`）之上：**加载即注册、卸载即逆回，没有特权内核**。想改循环本身？D-3 会说那就是改配置。
+
+**② 可以复用你已有的 Claude Code / Codex hooks（官方原生兼容）**
+dsh 官方提供了 `hooks-claude-code` 和 `hooks-codex` 两个插件，能读你已有的 `hooks.json` / `.codex/hooks.json`，把配置跑在 dsh 自己的拦截点上：
+
+```
+你已有的 CC hook (hooks.json) ──►  dsh-hooks-claude-code ──► agent/pre-step / tools/pre-execute ...
+你已有的 Codex hook (.codex/hooks.json) ──► dsh-hooks-codex ──► tools/pre-execute / post-execute ...
+```
+
+映射是官方的（如 CC `PreToolUse` → `tools/pre-execute`，`Stop` → `agent/turn-stopping`）。**迁移成本 = 零**：你在 CC/Codex 上沉淀的安全/规范 hook 资产，不用重写。
+
+**③ 能把 Claude Code / Codex 本身当成你的子 agent**
+dsh 的 `subagent` seam 支持多 provider：`subagent-codex` 能 spawn 一个真实 Codex app-server 子进程，`subagent-claude-code` 能用官方 Claude Agent SDK 起一个真实 CC 子 agent。也就是：**主循环你说了算（dsh 编排），具体执行可以交给 CC/Codex 各自擅长的场景**，而不是被某一家锁死。
+
+**④ 模型自由**
+Claude Code 绑 Anthropic、Codex 绑 OpenAI。dsh 的 LLM 是 seam：`ctx.llm` 上注册哪个 provider 用哪个——DeepSeek、MiniMax、任意 OpenAI 兼容端点都行（本项目就把 DeepSeek 官方 + MiniMax 搜索都接上了）。这对国内团队尤其关键：**不用翻墙、可私有化、成本可控**。
+
+**⑤ 完全离线/本地优先 + 隐私可审计**
+所有会话是**本地 jsonl 事件日志**，配置是本地 YAML。`session-telemetry-otel` 在 base 里默认 `DISABLED`（`DSH_TELEMETRY_MODE || 'DISABLED'`），只有你显式设环境变量才会上报——**默认不出本机**。沙箱按平台分层：Linux `bwrap`/Landlock、macOS Seatbelt、Windows ACL 受限令牌。代码/提示词默认留在本地，适合有数据合规要求的团队。
+
+**⑥ 一切皆文件、可版本化、可移植**
+配置就是 YAML、会话就是 jsonl、历史就是 git 可管的文本。我们仓库就是证据：`cordis.patch.yml` + `install-plugins.mjs`，新机器一条命令装齐（可移植性 kill CC/Codex 的"配置在自家云/自家目录"模式）。
+
+### D-3 一句话回应常见质疑
+
+| 质疑 | 回应 |
+| --- | --- |
+| "CC/Codex 已经很好用了，为什么要换？" | 不必换。dsh 的兼容桥让你**先把 CC/Codex 资产搬进 dsh**，再用插件层补它们做不到的事（文件树实时刷新、钉钉桥、自研调度）。 |
+| "dsh 是开发者预览，不稳吧？" | 对，破坏性变更确实多（两周 rc.8→rc.2 三次）。但这也意味着**生态窗口期**：现在沉淀的插件与踩坑方法论，等演进到稳定版就是稀缺资产。 |
+| "什么场景该选 dsh？" | 想要**可扩展底座**、想**多模型/多工具自由组合**、想**本地可控**的团队；CC/Codex 适合"装完即用、不想折腾"的个人/团队。 |
+| "你的插件能稳定跑吗？" | 三道防线（部署前自检 + 安装门禁 + 升级契约检查）把"插件搞崩 dsh"的概率压到最低，见 §5。 |
+
+### D-4 一句话收束（讲稿照读）
+
+> **Claude Code / Codex 是精装房，拎包入住；dsh 是毛坯房 + 一张设计图，你可以按自己的方式装修，还能把精装房里你喜欢的家具（hooks、子 agent）搬进来。** 对想"搭自己的 Agent 工作流"的人来说，后者是独一无二的。这也是为什么我两周内从一个用户变成了给它写插件的人。
