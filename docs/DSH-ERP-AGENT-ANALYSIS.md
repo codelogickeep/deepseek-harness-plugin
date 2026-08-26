@@ -468,6 +468,77 @@ L2：工具【拿得到哪些行】← execute 内部注入 dept（数据源头�
 L3：工具【看得见哪些列】← post-execute 裁剪（出口）
 ```
 
+### 5.7 ERP 很多功能 API 怎么批量加载（MCP + 原生 + 官方三层）
+
+> 前面的例子只讲了单个工具。真实 ERP 有几十上百个功能 API（查库存/下单/报表/字典/审批流…），这一节讲**整套工具集怎么加载**。
+
+#### 5.7.1 三层加载策略（一次讲清）
+
+DSH 加载 ERP 工具集的官方机制（均有源码/doc 实证）：
+
+| 层 | 机制 | 适用 | 工具名的样子 |
+| --- | --- | --- | --- |
+| **① 原生工具插件**（推荐给核心 API） | 写 DSH 宿主插件，`ctx.tools.register`，自带 schema + L2 注入 + L3 裁剪 | 核心业务 API（销售/库存/下单——高敏、要权限审计）| `query_sales`（干净的名字，可挂 post-execute）|
+| **② MCP client 批量挂载**（推荐给大量外围 API） | DSH 官方 `dsh-mcp-client` 插件，连接你的 ERP MCP server，**工具自动注册进 `ctx.tools`** | 报表/字典/配置等大量低敏 API | `mcp__erp__query_sales`（server 限定名）|
+| **③ 官方自带工具**（dsh-base ~80 个） | 出厂就有，零成本 | 文件/命令/搜索/子agent/定时… | `bash` / `edit` / `glob` / `grep` / `subagent`…|
+
+> **MCP client 是"大量 API 批量加载"的关键答案**：你的 ERP 只需提供一个 MCP server（把 API 暴露为 MCP tools），DSH 一行配置连上，全部 API 自动成为 Agent 可调用的原生工具——**不用为每个 API 写插件**。
+
+#### 5.7.2 加载架构图
+
+```mermaid
+flowchart LR
+    ERP["ERP 系统（Java，大量功能 API）"] -->|封装| MCP["ERP MCP Server<br/>把 API 暴露为 MCP tools"]
+    MCP -->|stdio / streamable-http| CLIENT["dsh-mcp-client（官方插件）<br/>一行配置 = 连一个 server"]
+    CLIENT -->|ctx.tools.register| TOOLS["ctx.tools 注册表<br/>mcp__erp__query_sales 等"]
+    NATIVE["核心 API 原生插件<br/>query_sales（带 L2 注入+L3 裁剪）"] --> TOOLS
+    TOOLS --> RESTRICT["L1 作用域 restrict 过滤<br/>（MCP 工具同样可 restrict）"]
+    RESTRICT --> MODEL["模型可见工具列表<br/>schema 组装"]
+
+    style MCP fill:#d6e9ff,stroke:#1f6fb2
+    style CLIENT fill:#d6e9ff,stroke:#1f6fb2
+    style NATIVE fill:#d6ffd9,stroke:#1e8449
+    style RESTRICT fill:#ffd6d6,stroke:#c0392b
+```
+
+- **MCP client 细节**（官方 doc 实锤）：连接时 `listTools()` → 每个工具 `ctx.tools.register()` 为 `mcp__<serverName>__<rawName>`；断线自动重连（指数退避）、重连上限可配、重连后旧代工具先保留；`failOnStartupError` 可设为连接失败即拒绝激活。
+- **MCP 工具也可被 L1 restrict**：它们注册进 global `ctx.tools`，在 `restrictableNames` 里——`agent.ctx.tools.restrict({deny:['mcp__erp__create_order']})` 同样生效。
+
+#### 5.7.3 配置层写法（一行为一个 server）
+
+```yaml
+# cordis.patch.yml —— 挂载 ERP 的 MCP server
+- insert:
+    - id: mcp-erp            # ERP 业务 API（HTTP）
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: erp
+        transport: streamable-http
+        url: http://erp.internal/mcp
+        headers:
+          Authorization: !!js '`Bearer ${process.env.ERP_MCP_TOKEN}`'
+
+    - id: mcp-erp-report     # 报表 API（stdio，第二个 server）
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: erp-report
+        transport: stdio
+        command: npx
+        args: ['-y', '@local/erp-report-mcp']
+```
+
+模型里就会看到：`mcp__erp__query_sales`、`mcp__erp__create_order`、`mcp__erp_report__daily_report` …
+
+#### 5.7.4 怎么选"原生 vs MCP"（决策表）
+
+| 判断 | 建议 | 原因 |
+| --- | --- | --- |
+| 核心业务 API（销售/库存/下单，高敏） | **原生工具** | 能挂 L2（注入 dept）/ L3（替换 value 裁剪），权限+审计最强 |
+| 外围大量 API（报表/字典/配置） | **MCP client** | 批量挂载零成本，`mcp__erp__*` 开箱即用 |
+| 只读/低敏，先接起来跑 | **MCP client 先上** | 快速见效，后面核心 API 再转原生 |
+
+> **一句话**：核心 API 用原生插件（要权限/审计的握在自己手里），外围 API 用 MCP 批量挂（量大省事），通用能力用官方自带——三层互补，DSH 的 `ctx.tools` 是统一注册表，L1 restrict 对三者一视同仁。
+
 ---
 
 ## 六、落地建议（两步走，从能力验证到立项）
