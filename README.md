@@ -394,7 +394,8 @@ npm run install:plugins
 │   ├── MINIMAX-SEARCH.md    # MiniMax 搜索接入指南
 │   ├── BROWSER-READER.md    # 浏览器阅读插件（web_read 系列工具）
 │   ├── UI-ENHANCE.md        # 增强型 UI 交互界面插件（架构/部署/事故教训）
-│   └── PLUGIN-RESILIENCE.md # 第三方插件容错研究（为什么 fail-loud + 自检防线）
+│   ├── PLUGIN-RESILIENCE.md # 第三方插件容错研究（为什么 fail-loud + 自检防线）
+│   └── DSH-ERP-AGENT-ANALYSIS.md # DSH 在两类 ERP Agent 场景下的优势深度分析
 └── .env.example
 ```
 
@@ -410,6 +411,7 @@ npm run install:plugins
 - [增强型 UI 交互界面插件](docs/UI-ENHANCE.md)（状态面板 + 打开 IDE，架构/部署/注入门禁）
 - [第三方插件容错研究](docs/PLUGIN-RESILIENCE.md)（第三方插件为何能搞崩 DSH + 自检防线）
 - [flash-worker 多 Agent 协同](docs/FLASH-WORKER.md)（pro 指挥、flash 执行的 preset 原理/安装/使用）
+- [DSH 在两类 ERP Agent 场景下的优势深度分析](docs/DSH-ERP-AGENT-ANALYSIS.md)（客户向产品化 + 研发向提效，与 LangGraph 路线正面 PK）
 
 ## 测试
 
