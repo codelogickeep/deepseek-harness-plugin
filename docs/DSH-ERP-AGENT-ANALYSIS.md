@@ -539,6 +539,100 @@ flowchart LR
 
 > **一句话**：核心 API 用原生插件（要权限/审计的握在自己手里），外围 API 用 MCP 批量挂（量大省事），通用能力用官方自带——三层互补，DSH 的 `ctx.tools` 是统一注册表，L1 restrict 对三者一视同仁。
 
+### 5.8 多领域 Agent 服务化：领域工具集 → preset → Agent API
+
+> 目标设计：**不同业务领域（库存/销售/财务…）各有自己的工具集，把它做成"Agent"，统一发布成 API 给外部（ERP 系统 / 钉钉 / 其他服务）调用。**
+> 我们容易先想到"一个领域一个 profile"——但 DSH 的设计意图不是这样。正确形态是：**一个 host（profile）+ 多个 agent preset（每个领域一个）+ 统一 /api**。
+
+#### 5.8.1 为什么是 preset，不是 profile（先纠偏）
+
+| | 一个领域一个 profile ❌ | 一个领域一个 agent preset ✅ |
+| --- | --- | --- |
+| profile 是什么 | **整套运行时外壳**（web/tui/headless/自定义）——含服务器、浏览器、持久化 | — |
+| preset 是什么 | — | **"这个 agent 长什么样"**：persona + 挂哪些工具行（一个会话一个作用域） |
+| DSH 的设计意图 | profile 是"启动形态"；领域隔离不是它的单位 | `agent-presets` 明确"每会话选哪个组装"，per-agent 作用域天然隔离 |
+| 代价 | 每领域一套进程/端口/服务器，重 | 一套 host，按会话挑 preset，轻 |
+| 官方实证 | — | 四种内置模式（standard/code/minimal/cordis）就是四个 preset，同进程并存 |
+
+#### 5.8.2 架构图：多领域 preset + Agent API
+
+```mermaid
+flowchart TD
+    HOST["dsh host（单个 web profile）<br/>自带 /api 网关 + 审批/沙箱/会话/审计"]
+
+    subgraph PRESETS["agent preset 库（每领域一个）"]
+        P1["preset: inventory（库存）<br/>agent.cordis.yml 挂 库存工具集"]
+        P2["preset: sales（销售）<br/>agent.cordis.yml 挂 销售工具集"]
+        P3["preset: finance（财务）<br/>agent.cordis.yml 挂 财务工具集"]
+        P4["preset: erp-base（通用）<br/>官方工具 + 钉钉桥 + 基础"]
+    end
+
+    HOST --> PRESETS
+
+    API["/api 入口"] -->|session.create preset=sales| HOST
+    API -->|session.prompt 发消息| HOST
+    HOST -->|按 preset 组装该会话的工具| P2
+
+    CALLER1["Java ERP 系统<br/>（调 /api 建会话+发消息）"] --> API
+    CALLER2["钉钉/企微<br/>（经桥接器选领域）"] --> API
+    CALLER3["其他内部服务"] --> API
+
+    style HOST fill:#d6e9ff,stroke:#1f6fb2
+    style P1 fill:#d6ffd9,stroke:#1e8449
+    style P2 fill:#d6ffd9,stroke:#1e8449
+    style P3 fill:#d6ffd9,stroke:#1e8449
+    style API fill:#fff3d6,stroke:#b7950b
+```
+
+#### 5.8.3 领域 preset 怎么写（基于 flash-worker 同款机制）
+
+DSH 的 preset 是一个目录，含 `preset.yml`（元数据）+ `agent.cordis.yml`（agent 组装；工具行在 `isolate realm` 内、per-session 私有）。本机已有实证：`~/.dsh/.agent-presets/flash-worker/`（我们在用的 pro 指挥 flash 就是这个形态）。
+
+```text
+# 领域 preset 目录结构（DSH 扫描 agent-presets，有 trust: system|user）
+~/.dsh/.agent-presets/
+├── erp-inventory/
+│   ├── preset.yml            # name: 库存领域 · description: 挂库存工具集
+│   └── agent.cordis.yml      # persona + 库存工具行（原生插件 / mcp 服务器）
+├── erp-sales/
+│   ├── preset.yml
+│   └── agent.cordis.yml      # persona + 销售工具行 + L2/L3 权限接线
+└── erp-finance/
+    └── ...
+```
+
+要点（来自官方 `agent-presets` 配置与 flash-worker 源码注释）：
+- preset 是 **agent-plane 组装**：挂的是「这个会话能看到什么工具、什么 persona」；
+- 工具行**必须**放在带 `isolate realm` 的 group 里 → 每个会话一份私有实例，不互相污染；
+- preset 只控制 agent 层；**host 平面**（注册表、沙箱、审批、持久化、模型路由）由 base/web 组合包持有一份；
+- 本仓库的 `install-flash-preset.mjs` 就是"渲染 preset → 装进 `~/.dsh/.agent-presets/`"的脚手架，可按同样套路做 `erp-*` 领域 preset。
+
+#### 5.8.4 怎么"发布成 Agent API"
+
+DSH 的 web profile **自带 /api 网关**（你的钉钉桥接器就是这么接入的）：
+- `POST /api/session.create` —— 建会话，**指定 preset（= 挑领域）**；
+- `POST /api/session.prompt` —— 向该会话发消息；
+- `WS /api/events.mux` —— 收 Agent 事件流（回复/工具调用/状态）。
+
+外部调用侧（Java ERP 视角）：
+```text
+POST /api/session.create  { preset: 'erp-sales', ... }   ← 创建"销售领域 Agent"会话
+POST /api/session.prompt  { sessionId, content: '查本月销售Top10' } ← 只有销售工具集可见
+```
+
+#### 5.8.5 跟三层权限怎么衔接（闭环）
+
+```
+领域 preset 决定「这个会话挂哪些工具」（销售/库存/财务各一份）
+      +
+L1 作用域 restrict 决定「这个用户在这个领域里能看哪些工具」（restrict 到 preset 内）
+      +
+L2/L3 在工具内部/post-execute 决定行和列
+```
+即：**preset 管"领域"，L1 管"人"**——同一 sales preset，不同用户登录看到的功能集不同；权限表决定 restrict 给谁。
+
+> **一句话**：领域工具集做成 agent preset（一个领域一个），一个 host 统一 /api（建会话时选 preset），三层权限在里面按用户再收窄——这就是"多领域 Agent 服务化"在 DSH 上的正确姿势，比"一领域一 profile"省一个量级、也符合 DSH 的每会话选 agent 设计。
+
 ---
 
 ## 六、落地建议（两步走，从能力验证到立项）

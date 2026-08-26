@@ -389,7 +389,7 @@ output: {
 | --- | --- | --- |
 | 只剩 10 分钟 | §6 可移植性、§3.3 亮点 B | §2 设计态 2.1–2.4（这是听懂全场的地基）、§4 三个事故 |
 | 只剩 7 分钟 | §3 全家福合并进 §1，§2.4 时序图口头带过 | §2.1–2.3（叠层图+最小插件）、§4 + §5 |
-| 要 20 分钟 | §2.4 展开官方时序图逐帧讲 + 现场演示（更稳：现场开 dsh 展示文件树实时刷新 + web_read 读页面）+ **附录 E 四层楼模型展开讲（强烈推荐）** | 全部保留，Q&A 延长 |
+| 要 20 分钟 | §2.4 展开官方时序图逐帧讲 + 现场演示（更稳：现场开 dsh 展示文件树实时刷新 + web_read 读页面）+ **附录 E 四层楼模型展开讲（强烈推荐）** + **附录 F 多领域 preset/Agent API（企业场景加分）** | 全部保留，Q&A 延长 |
 
 ## 附录 B：关键数据一览（背稿可用）
 
@@ -583,3 +583,59 @@ Claude Code 绑 Anthropic、Codex 产品绑 OpenAI（执行层虽开源、但模
 - Google ADK vs LangGraph 对比（2026）- https://dev.to/jangwook_kim_e31e7291ad98/google-adk-vs-langgraph-2026-i-installed-both-and-compared-them-side-by-side-1dld
 - LangGraph 持久化执行官方文档：https://langgraph.org.cn/concepts/durable_execution
 - Dify 官方：https://docs.dify.ai/
+
+---
+
+## 附录 F：多领域 Agent 服务化 —— 领域工具集做成 preset、统一发布成 Agent API
+
+> 分享会"进阶亮点"素材：回答"dsh 能不能做成多领域 Agent 服务（ERP 场景）"——一句话：**领域工具集 → 一个 agent preset；一个 host 统一 /api；权限按用户在 preset 内再收窄。**
+> 配套深度版在 [DSH-ERP-AGENT-ANALYSIS.md](./DSH-ERP-AGENT-ANALYSIS.md) 5.8（本仓库文档）。
+
+### F-1 先纠一个常见直觉：不要"一个领域一个 profile"
+
+- ❌ 想当然：库存一个 profile、销售一个 profile → 每套都是完整运行时（进程/端口/服务器），笨重；
+- ✅ 正确：**一个 host（profile）+ 多个 agent preset**——preset 决定"这个会话长什么样、挂哪些工具"，host 只跑一套（/api + 审批 + 沙箱 + 审计）。
+
+> 官方实证：DSH 四种模式（standard/code/minimal/cordis）就是四份 preset，同一进程并存；我们的 `flash-worker` 也是这个形态（`~/.dsh/.agent-presets/flash-worker/`）。
+
+### F-2 架构图（一页讲清）
+
+```mermaid
+flowchart TD
+    HOST["dsh host（单个 web profile）<br/>/api 网关 + 审批/沙箱/会话/审计"]
+
+    subgraph PRESETS["agent preset 库（每领域一个）"]
+        P1["preset: erp-inventory（库存）"]
+        P2["preset: erp-sales（销售）"]
+        P3["preset: erp-finance（财务）"]
+        P4["preset: erp-base（通用）"]
+    end
+
+    HOST --> PRESETS
+    API["/api 入口"] -->|session.create preset=erp-sales| HOST
+    API -->|session.prompt 发消息| HOST
+    HOST -->|按 preset 组装该会话工具| P2
+
+    CALLER1["Java ERP 系统"] --> API
+    CALLER2["钉钉/企微（桥接器）"] --> API
+
+    style HOST fill:#d6e9ff,stroke:#1f6fb2
+    style P1 fill:#d6ffd9,stroke:#1e8449
+    style P2 fill:#d6ffd9,stroke:#1e8449
+    style P3 fill:#d6ffd9,stroke:#1e8449
+    style API fill:#fff3d6,stroke:#b7950b
+```
+
+### F-3 口播话术（照着讲 30 秒）
+
+> **"如果你有多个业务领域，每个领域要自己的 Agent、又要统一对外——dsh 的正解不是开一堆服务，而是一套 host + 一堆 preset。preset 就是'这个 Agent 挂哪些工具的装配单'，建会话时挑一个，同一个进程里可以同时跑销售 Agent、库存 Agent、财务 Agent。对外呢，web 自带 /api——你的系统调 `session.create?preset=sales` 就得到一个销售领域 Agent，再 `session.prompt` 发话。这就像一个服务中心，每个领域一扇门，但门都开在同一栋楼里。"**
+
+### F-4 和三层权限/多领域怎么闭环（一句话）
+
+- **preset 管领域**（sales 会话=销售工具集）、**L1 restrict 管人**（同一 sales preset，张三/李四可见工具不同）、**L2/L3 管数据**（行/列）。
+- 详见 [DSH-ERP-AGENT-ANALYSIS.md](./DSH-ERP-AGENT-ANALYSIS.md) 第五章（权限）+ 5.8（preset 服务化）。
+
+### F-5 现场可演示点（可选）
+
+- 开两个会话：一个选 `erp-sales` preset、一个选 `erp-inventory`，问同一个问题，看各自只拿到本领域工具；
+- 或现场 `cat ~/.dsh/.agent-presets/flash-worker/agent.cordis.yml`，展示 preset = 装配单的真实形态。
