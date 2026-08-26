@@ -392,6 +392,82 @@ sequenceDiagram
 
 **一句话**：三层权限的**设计思路**任何框架都能做（openclaw、LangGraph、甚至手写 if）。DSH 的差异是——**这些环节内建且带结构保证（单调守卫、替换 value 防泄露、事件溯源自动审计），加上作用域/配置层声明免写代码**。选型时按"你要不要这些开箱保证 + 全量审计"来权衡，而不是"谁才能做三层权限"。
 
+### 5.6 L1 功能权限具体怎么做（插件骨架 + 架构图）
+
+> 本节回答"L1 到底怎么落地、写什么样的插件"。核心思想一句话：**让无权用户的"模型可见工具列表"里根本没有 `query_sales`**——不是"调用了再拦"，而是"模型根本不知道这个工具存在"。
+
+#### 5.6.1 两条 DSH 原生途径（二选一或组合）
+
+| 途径 | 做法 | 说明 |
+| --- | --- | --- |
+| **A. agent 作用域注册** | 工具注册到"某个 agent 的作用域"（`agent.ctx.tools.register(...)`），有权用户才有，无权用户不注册 | 工具对无权 agent 的 model schema 不可见 |
+| **B. `agent.ctx.tools.restrict()`**（推荐） | 官方为"每个 agent 不同工具可见性"设计的原语：`allow: ['query_sales']`（只留这些）或 `deny: ['query_sales']`（移除） | 只能在 agent 作用域用；**全局调用会直接报错**（源码：`tools.restrict() requires a scoped context (agent.ctx)`，防止误伤所有 agent）；可热更新 |
+
+> 两者本质相同：都是"作用域级"声明工具可见性。推荐 B（restrict），因为是官方为此设计的原语、误用会被拦截。
+
+#### 5.6.2 插件骨架（结构示意，非部署代码）
+
+```js
+// plugins/erp-permission/erp-permission.mjs — L1 功能权限插件
+export const inject = ['tools']          // 需要 tools 服务（restrict 在 ctx.tools 上）
+export function apply(ctx, config) {
+  // 权限来源：config.users（id → canSeeSales）；真实 ERP 换成"登录人 + 权限服务"
+  const canSeeSales = (userId) =>
+    (config.users || []).find(u => u.id === userId)?.canSeeSales ?? false
+
+  // 🔑 关键插桩点：在 agent 作用域世界里按用户权限 restrict
+  ctx.on('agent/created', (agent) => {   // 或更早：ctx.agents.setup（先于首个提示词）
+    const userId = agent.ctx.user?.id ?? config.defaultUser
+    if (!canSeeSales(userId)) {
+      // 无权 → 从该 agent 的工具可见列表里移除查销售工具
+      agent.ctx.tools.restrict({ deny: ['query_sales'] })
+      // 有权 → 不 restrict（工具保持可见）；或 allow: [...]
+    }
+  })
+}
+```
+
+> 说明：`agent.ctx` 是 agent 作用域上下文（官方文档：agent-scoped context，贡献 agent-local、卸载逆回）；`agent.ctx.tools.restrict()` 是作用域级原语。真实 ERP 里 `userId` 来自会话绑定的登录人，权限查你的权限服务。
+
+#### 5.6.3 L1 运作架构图
+
+```mermaid
+flowchart TD
+    U1["👤 有权用户 张三"] --> S1["agent 作用域（张三）"]
+    U2["👤 无权用户 李四"] --> S2["agent 作用域（李四）"]
+
+    subgraph R1["张三类 agent"]
+        S1 --> A1["工具列表: query_sales, query_order,..."]
+        A1 --> M1["模型 schema: 能看到 query_sales"]
+    end
+
+    subgraph R2["李四类 agent"]
+        S2 --> B2["agent.ctx.tools.restrict(deny:['query_sales'])"]
+        B2 --> A2["工具列表: query_order,... (无 query_sales)"]
+        A2 --> M2["模型 schema: 没有 query_sales"]
+    end
+
+    M1 --> C1["可调用 query_sales ✅"]
+    M2 --> C2["调用 query_sales → UNKNOWN_TOOL ❌"]
+
+    style S1 fill:#d6ffd9,stroke:#1e8449
+    style S2 fill:#ffd6d6,stroke:#c0392b
+    style B2 fill:#ffd6d6,stroke:#c0392b
+    style M2 fill:#ffecec,stroke:#c0392b
+```
+
+**运作三步：**
+1. agent 创建时，按当前用户权限调用 `restrict`（或作用域注册）；
+2. 无权用户 → `query_sales` 从他的工具可见列表消失 → **模型 schema 里没有它**；
+3. 即便模型（或恶意 prompt）试图调用 → DSH 报 `UNKNOWN_TOOL`，无执行、留审计。
+
+**L1 / L2 / L3 分工再强调（防止混淆）：**
+```
+L1：工具【可不可见】   ← 作用域 / restrict（模型不知道 = 最强）
+L2：工具【拿得到哪些行】← execute 内部注入 dept（数据源头）
+L3：工具【看得见哪些列】← post-execute 裁剪（出口）
+```
+
 ---
 
 ## 六、落地建议（两步走，从能力验证到立项）
