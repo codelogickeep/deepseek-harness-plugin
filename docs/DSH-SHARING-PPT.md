@@ -202,6 +202,8 @@ agent.session.append('cron/dispatch', ...)
 
 一是把 dsh 用成"**两级开发团队**"：主 agent（pro）负责规划、拆任务、review，flash 子 agent 通过 `flash_agent` 工具接管具体编码——pro 想清楚"做什么"，flash 动手"做"。这是 subagent seam 的 per-agent 模型指定，我们做成了可一键安装的 `flash-worker` preset。
 
+需要说清楚的是：Claude Code 和 Codex **也支持**"给每个子 agent 配不同模型"（CC 可以在 haiku/sonnet/opus 三档里选，Codex 可以在 gpt-5.4 系列里选）——所以"多 agent 配不同模型"不是 dsh 独有的。**dsh 真正不同的地方是：子 agent 可以选择任意厂商的任意模型**——主 agent 用 DeepSeek、子 agent 用本地 Ollama 或别的厂商，甚至能把 Codex、Claude Code 本身拉进来当子 agent。一句话：CC/Codex 是"多 agent + 自家档位模型"，dsh 是"多 agent + 跨厂商自由组合"。这才是真正的开放编排。
+
 二是可移植性：DSH 插件有个隐藏痛点——装进 profile 后要用**手工编辑 `cordis.patch.yml`** 才能引用，这直接杀死推广。我们的脚手架 `npm run install:plugins` 把"构建 + 自检 + 装进 profile + 自动补 patch 引用"全包了，新电脑 clone 下来一条命令装齐。
 
 ---

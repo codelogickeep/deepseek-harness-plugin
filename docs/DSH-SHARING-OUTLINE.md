@@ -218,6 +218,7 @@ export function apply(ctx) {
 | **vs 轻量工具**（openclaw 个人助理） | dsh **更轻**——openclaw 是"个人助理 + 一堆聊天渠道"的重型成品；dsh 是内核 + 配置树，不带预设业务，你要什么叠什么 | openclaw 定位 personal AI assistant（20+ 渠道）；dsh = Agent 运行时底座 |
 | **vs Agent SDK**（LangGraph/ADK） | dsh **完整度高**——SDK 给你零件库（图/状态/编排），dsh 给你整机 + 图纸：agent 循环、会话、沙箱、审批、UI、/api 全内置，不用从零焊 | SDK 要自己搭 loop/审计/UI；dsh ~80 行 base 插件开箱即用 |
 | **vs 闭源成品**（CC/Codex） | dsh **更开放 + 守通用协议**——全开源、可自托管、模型自由；对外用通用 /api 协议（session.prompt + events.mux，与浏览器/钉钉/你自己的系统同一套），不被锁在自家生态 | `/api` 外部协议官方内置；CC/Codex 绑自家 |
+| **多 agent × 多模型**（重要） | dsh **跨厂商自由组合**——主 agent 用 DeepSeek、子 agent 用本地/Ollama/其他厂商，或把 Codex/CC 当子 agent。CC/Codex 也能给子 agent 换自家档位模型（CC: haiku/sonnet/opus；Codex: gpt-5.4 系列），但**换不了别家模型** | CC/Codex 子 agent 限自家模型（官方文档实证）；dsh subagent seam 支持任意 provider |
 | **难度/灵活性** | **插件一等公民 = 定制不难、又不失灵活**——加一个 AI 能力 = 一个插件（几分钟）；改到深层（模型/会话/UI）也是插件，不 hack 内核 | 我们 6 类能力全是插件长出来的，见 §3 |
 
 **一句话收束（讲稿照读）**：
@@ -365,7 +366,9 @@ output: {
 - **主 agent（pro 模型）** 负责规划、拆任务、决策、review——它想清楚「做什么」；
 - **flash 子 agent（flash 模型）** 通过 `flash_agent` 工具接管具体编码——它动手「做」。
 
-这是 DSH 的 subagent seam 原生能力：per-agent 模型指定。我把它做成了一个可一键安装的 **agent preset**（`flash-worker`），模板参数化，不把个人模型 id 写死进仓库。**实际感受是：复杂任务的质量上来了，整体成本降下来了。**
+这是 DSH 的 subagent seam 原生能力：**per-agent 模型指定，且跨厂商自由组合**——主 pro 和子 flash 来自不同 provider，都是任意厂商的任意模型。我把它做成了一个可一键安装的 **agent preset**（`flash-worker`），模板参数化，不把个人模型 id 写死进仓库。**实际感受是：复杂任务的质量上来了，整体成本降下来了。**
+
+> 补充口径（防被懂行的人打脸）：Claude Code / Codex 也支持"给每个子 agent 配不同模型"（CC 限 haiku/sonnet/opus、Codex 限 gpt-5.4 系列——都是自家档位）；**dsh 的差异是子 agent 可选任意厂商任意模型**（主 DeepSeek + 子本地/Ollama，甚至把 Codex/CC 当子 agent）。详见附录 D-2 ③。
 
 ### 6.2 可移植性：一条命令装好（讲稿）
 
@@ -471,7 +474,8 @@ output: {
 | 内核哲学 | **一切皆插件**（Cordis，可逆副作用） | 黑盒 + 有限的 hook 体系 | Rust 核心 harness + 插件扩展 |
 | 可扩展性 | 模型/工具/会话/UI/调度全是插件，无特权内核 | 通过 hooks/skills/subagents 扩展 | 通过 hooks / SDK / app-server 扩展 |
 | 兼容性 | **能跑你已有的 CC/Codex hooks**，能把 CC/Codex 当子 agent | 只认自己的生态 | 只认自己的生态 |
-| 模型自由 | 任意 LLM provider 可插 | 绑定 Anthropic 模型 | 可换基础模型（OpenAI 默认，app-server 支持自定义端点） |
+| 模型自由 | **任意 LLM provider 可插**（DeepSeek/MiniMax/兼容端点） | 绑定 Anthropic（可整体换 base-url 到第三方）| 绑 OpenAI 系列（app-server 支持自定义端点）|
+| **多 agent × 多模型** | ✅ **子 agent 可选任意厂商任意模型**（主 DeepSeek + 子本地/Ollama，或把 Codex/CC 当子 agent） | ⚠️ 子 agent 可指定 `haiku/sonnet/opus`——**限自家三档** | ⚠️ 子 agent 可指定 `gpt-5.4` 系列 + reasoning effort——**限自家系列** |
 | 迭代状态 | 开发者预览，破坏性变更多 | 成熟稳定 | 成熟稳定 |
 
 ### D-2 dsh 的六大差异化优势（讲稿，选讲 3 条就够了）
@@ -489,11 +493,16 @@ dsh 官方提供了 `hooks-claude-code` 和 `hooks-codex` 两个插件，能读�
 
 映射是官方的（如 CC `PreToolUse` → `tools/pre-execute`，`Stop` → `agent/turn-stopping`）。**迁移成本 = 零**：你在 CC/Codex 上沉淀的安全/规范 hook 资产，不用重写。
 
-**③ 能把 Claude Code / Codex 本身当成你的子 agent**
-dsh 的 `subagent` seam 支持多 provider：`subagent-codex` 能 spawn 一个真实 Codex app-server 子进程，`subagent-claude-code` 能用官方 Claude Agent SDK 起一个真实 CC 子 agent。也就是：**主循环你说了算（dsh 编排），具体执行可以交给 CC/Codex 各自擅长的场景**，而不是被某一家锁死。
+**③ 多 agent × 多模型：dsh 是"跨厂商自由组合"（重要特性）**
+先说清楚：**Claude Code 和 Codex 也支持"为每个子 agent 指定不同模型"**——CC 可给子代理选 `haiku/sonnet/opus` 三档（文件 `.claude/agents/*.md` 或 SDK `agents` 参数），Codex 可给每个 agent 配 `gpt-5.4` 系列 + reasoning effort（`~/.codex/agents/*.toml`）。所以"多 agent 配不同模型"**不是 dsh 独有**。
+但三者差异在**模型范围**：
+- CC 子代理只能在 **Anthropic 自家三档**里选；
+- Codex 子代理只能在 **OpenAI 自家系列**里选；
+- **dsh 的 subagent seam 支持"任意 provider 的任意模型"**：主 agent 用 DeepSeek、子 agent 用本地 Ollama / MiniMax / 任意 OpenAI 兼容端点——**跨厂商自由组合**；还能把外部 Codex、Claude Code 当子 agent（`subagent-codex` / `subagent-claude-code` provider）。这是闭源工具做不到的。
+一句话：**CC/Codex 是"多 agent + 自家不同档位模型"；dsh 是"多 agent + 跨厂商任意模型"**——后者才是真正开放的编排。
 
-**④ 模型自由**
-Claude Code 绑 Anthropic、Codex 产品绑 OpenAI（执行层虽开源、但模型仍走 OpenAI API / 可配自定义端点）。dsh 的 LLM 是 seam：`ctx.llm` 上注册哪个 provider 用哪个——DeepSeek、MiniMax、任意 OpenAI 兼容端点都行（本项目就把 DeepSeek 官方 + MiniMax 搜索都接上了）。这对国内团队尤其关键：**不用翻墙、可私有化、成本可控**。
+**④ 模型自由（单 agent 层面也一样）**
+主 agent 层面：Claude Code 绑 Anthropic（可通过 `ANTHROPIC_BASE_URL` 整体换成 DeepSeek 等——但那是"全体换"，不是 per-agent）；Codex 绑 OpenAI 系列（app-server 可配自定义端点）。dsh 的 LLM 是 seam：`ctx.llm` 上注册哪个 provider 用哪个——DeepSeek、MiniMax、任意 OpenAI 兼容端点都行（本项目就把 DeepSeek 官方 + MiniMax 搜索都接上了）。这对国内团队尤其关键：**不用翻墙、可私有化、成本可控**。
 
 **⑤ 完全离线/本地优先 + 隐私可审计**
 所有会话是**本地 jsonl 事件日志**，配置是本地 YAML。`session-telemetry-otel` 在 base 里默认 `DISABLED`（`DSH_TELEMETRY_MODE || 'DISABLED'`），只有你显式设环境变量才会上报——**默认不出本机**。沙箱按平台分层：Linux `bwrap`/Landlock、macOS Seatbelt、Windows ACL 受限令牌。代码/提示词默认留在本地，适合有数据合规要求的团队。
@@ -565,6 +574,7 @@ Claude Code 绑 Anthropic、Codex 产品绑 OpenAI（执行层虽开源、但模
 | 开源 | ✅ MIT | ❌ 闭源 | ⚠️ 执行层 Apache-2.0 / 产品闭源 | ✅ 开源（[Apache-2.0](https://github.com/langgenius/dify)） | ✅ 开源（MIT） |
 | 交互形态 | Web UI / CLI / 钉钉桥 / /api | 终端 CLI | 终端 CLI / SDK / app-server | 浏览器画布 + Web App/API | 纯代码（你写程序） |
 | 模型自由 | **任意 provider 可插**（DeepSeek 等） | 绑定 Anthropic | 默认 OpenAI，可换端点 | 多模型面板切换 | 任意（代码层自己定） |
+| **多 agent × 多模型** | ✅ **跨厂商任意模型**（主 DeepSeek + 子 Ollama/本地，或把 Codex/CC 当子 agent） | ⚠️ 子 agent 可选 `haiku/sonnet/opus`——限自家三档 | ⚠️ 子 agent 可选 `gpt-5.4` 系列+effort——限自家系列 | ✅（工作流里可切不同模型节点） | ✅ 代码层自己定 |
 | 扩展方式 | **一切皆插件**（工具/模型/会话/UI/调度全是插件） | hooks / skills / MCP / subagents | hooks / MCP / SDK / app-server 插件 | 插件 marketplace + 低代码节点 | 代码函数 / 节点 / 自定义工具 |
 | 状态与持久化 | 本地 jsonl 事件日志（事件溯源） | 会话/记忆（闭源管理） | 会话状态（app-server 持久） | 应用数据存储 + 会话 | **checkpointer 持久化执行**（LangGraph 主打） |
 | 人机协同 | 审批/沙箱/权限分层 | 审批、沙箱 | 审批、沙箱、HITL | 人工节点/审批（工作流里） | HITL 节点/断点恢复 |

@@ -70,8 +70,9 @@
   - 客户密钥、ERP 接口凭证 → `credentials` 托管，轮换跟操作走、不重启。
   - 这些如果不是内置，自己写会很重——DSH 是第一方能力，且可编程到会话级。
 
-### 特性 7：subagent 多 provider —— 多 Agent 协同 / 不同模型混合
-- **是什么**：subagent seam 支持多种 provider，per-agent 模型指定。我们的 `flash-worker` preset：主 agent（pro）规划、flash 子 agent 干活——**两只模型各司其职**。
+### 特性 7：subagent 多 provider —— 多 Agent 协同 / 跨厂商自由组合模型
+- **是什么**：subagent seam 支持多种 provider，**per-agent 模型指定且跨厂商自由组合**——主 agent 用 DeepSeek、子 agent 用本地 Ollama / 其他厂商的任意模型，甚至把外部 Codex / Claude Code 当子 agent。我们的 `flash-worker` preset：主 agent（pro）规划、flash 子 agent 干活——**两只模型各司其职**。
+- **准确口径（防误导）**：Claude Code / Codex 也支持"给每个子 agent 配不同模型"（CC 限 `haiku/sonnet/opus` 三档、Codex 限 `gpt-5.4` 系列——都是**自家档位**）；**dsh 的差异是子 agent 可选任意厂商任意模型**，且能把 CC/Codex 本身当子 agent。对 ERP 的意义：主 agent 用强模型做规划/判断，子 agent 用便宜模型做批量/执行，**按任务性价比自由配**，不被任何一家模型锁死。
 - **ERP 意味着什么**：复杂任务（跨模块排查、多步报表生成）让"规划型"和"执行型"模型分工；**也支持把外部 agent（如 Codex/Claude Code）当子 agent 用**，不被某一家锁死。
 
 ### 特性 8：模型自由 —— 不绑死任何模型
@@ -219,7 +220,7 @@ DSH 的 skills 是插件（`SKILL.md`），配 `skill-filesystem` 自动注入�
 | 审批/权限/沙箱/凭据 | ✅ approval/sandbox/credentials |
 | 前端 / 多种入口 | ✅ web/tui/headless + /api + 桥接 |
 | 模型切换 | ✅ ctx.llm |
-| 子 agent / 多模型协同 | ✅ subagent seam |
+| 子 agent / 跨厂商多模型协同 | ✅ subagent seam（per-agent 任意模型，能把 Codex/CC 当子 agent）|
 | 团队知识沉淀 | ✅ skills（文件化）|
 | **你真正要写的只剩** | **业务工具、业务知识、业务规则** |
 
