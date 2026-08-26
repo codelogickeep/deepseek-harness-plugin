@@ -669,6 +669,20 @@ flowchart TD
 - **preset 管领域**（sales 会话=销售工具集）、**L1 restrict 管人**（同一 sales preset，张三/李四可见工具不同）、**L2/L3 管数据**（行/列）。
 - 详见 [DSH-ERP-AGENT-ANALYSIS.md](./DSH-ERP-AGENT-ANALYSIS.md) 第五章（权限）+ 5.8（preset 服务化）。
 
+### F-4b preset 不只是"配模型"——是整份 Agent 装配单（深度话题）
+
+常被低估的点：preset 不只是在选模型。一份 `agent.cordis.yml` 同时定义五层（用本机 flash-worker 实证）：
+
+| 层 | 配什么 | 实证 |
+| --- | --- | --- |
+| ① 身份/提示词 | persona、指令、模型路由 | `persona` / `agent-instructions`（模型只是其中一小字段）|
+| ② 工具权限 | 挂哪些、禁用哪些 | `tool-bash`/`tool-fs`/`tool-web`… + `disabled: true` |
+| ③ 能力开关 | 能不能 plan、怎么压缩、怎么委派 | `planning`/`compaction`/`delegation` group |
+| ④ 协作模式 | 指挥哪些子 agent + 各自模型/后端 | `tool-subagent-flash`/`subagent-codex`/`tool-workflow` |
+| ⑤ 作用域隔离 | 每会话私有实例 | `group: true` + `isolate: planMode/workflowEngine` |
+
+对照：CC/Codex 的 subagent 只能配"模型+工具+提示词"三件套；**planning/compaction/delegation 这种能力矩阵的粒度是 preset 层的独有深度**。详见 [DSH-ERP-AGENT-ANALYSIS.md](./DSH-ERP-AGENT-ANALYSIS.md) 5.8.3b。
+
 ### F-5 现场可演示点（可选）
 
 - 开两个会话：一个选 `erp-sales` preset、一个选 `erp-inventory`，问同一个问题，看各自只拿到本领域工具；

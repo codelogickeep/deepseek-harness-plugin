@@ -608,6 +608,20 @@ DSH 的 preset 是一个目录，含 `preset.yml`（元数据）+ `agent.cordis.
 - preset 只控制 agent 层；**host 平面**（注册表、沙箱、审批、持久化、模型路由）由 base/web 组合包持有一份；
 - 本仓库的 `install-flash-preset.mjs` 就是"渲染 preset → 装进 `~/.dsh/.agent-presets/`"的脚手架，可按同样套路做 `erp-*` 领域 preset。
 
+#### 5.8.3b preset 能力矩阵：不只是"配模型"，是整份 Agent 装配单
+
+> 回答前一个问题："preset 这种机制能支持到什么程度？"——**不是只配不同大模型，而是完整定义"这个 Agent 是谁、能用什么、能怎么工作、能和谁配合"**。以本机 `flash-worker/agent.cordis.yml` 真实文件逐行实证，一个 preset 可以同时声明五层：
+
+| 层 | 配什么 | flash-worker 实证 |
+| --- | --- | --- |
+| **① 身份/提示词** | persona、指令、模型路由 | `persona`（人格）/ `agent-instructions` / subagent 的 `agentOptions.provider+model`（模型只是其中一小字段）|
+| **② 工具权限** | 挂哪些工具、禁用哪些 | `tool-bash` / `tool-fs` / `tool-skill` / `tool-web`… + `disabled: true`（codex/claude-code 子 agent 默认禁）|
+| **③ 能力开关** | 能不能 plan、怎么压缩、怎么委派 | `planning` group（计划模式）/ `compaction` group（上下文压缩）/ `delegation` group（子 agent/工作流开关）|
+| **④ 协作模式** | 能指挥哪些子 agent、各用什么模型/后端 | `tool-subagent-flash`（flash 模型）/ `tool-subagent-codex`（把 Codex 当子 agent）/ `tool-workflow` / `tool-ralph` |
+| **⑤ 作用域隔离** | 每个会话私有实例、互不污染 | `group: true` + `isolate: planMode / workflowEngine` |
+
+**对照**：CC/Codex 的 subagent 只能配"model + tools + prompt"（角色 3 件套）；**planning/compaction/delegation 这种"能力矩阵"是 preset 层的结构能力**——同一份装配单里控制一个 Agent 的思维方式、记忆策略、委派权限和团队构成，这是"意义"上的差异，不是"仅仅换模型"。
+
 #### 5.8.4 怎么"发布成 Agent API"
 
 DSH 的 web profile **自带 /api 网关**（你的钉钉桥接器就是这么接入的）：

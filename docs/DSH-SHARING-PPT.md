@@ -222,7 +222,23 @@ DSH 的落法不是写一个大 if，而是把三层分别放在工具流水线�
 
 ---
 
-## 第十五页 · 企业场景：多领域 Agent 服务化
+## 第十五页 · preset 能力矩阵：不是"配模型"，是整份 Agent 装配单
+
+常被低估的一点：preset 不只是在"选个大模型"。用一个真实 preset（`~/.dsh/.agent-presets/flash-worker/agent.cordis.yml`）看，一份 preset 同时定义了五层：
+
+| 层 | 配什么 | 实证 |
+| --- | --- | --- |
+| ① 身份/提示词 | persona、指令、模型路由 | `persona` / `agent-instructions`（模型只是其中一小字段）|
+| ② 工具权限 | 挂哪些、禁用哪些 | `tool-bash`/`tool-fs`/`tool-web`… + `disabled: true` |
+| ③ 能力开关 | 能不能 plan、怎么压缩 | `planning` group / `compaction` group / `delegation` group |
+| ④ 协作模式 | 指挥哪些子 agent + 各自模型 | `tool-subagent-flash`（flash）/ `tool-subagent-codex` / `tool-workflow` |
+| ⑤ 作用域隔离 | 每会话私有实例 | `group: true` + `isolate: planMode/workflowEngine` |
+
+这五层合起来，就是"**这个 Agent 是谁、能用什么、能怎么工作、能和谁配合**"的完整定义——规划模式、上下文压缩、委派权限、团队构成全在装配单里。对照之下，Claude Code / Codex 的 subagent 只能配"模型 + 工具 + 提示词"三件套；**planning/compaction/delegation 这种能力矩阵的粒度，是 preset 这类机制特有的深度**。
+
+---
+
+## 第十六页 · 企业场景：多领域 Agent 服务化
 
 如果想给多个业务领域（库存、销售、财务）各做一个 Agent、又要统一对外，dsh 的正解是：**一个 host + 多个 agent preset**，而不是"一领域一个 profile"。
 
@@ -237,7 +253,7 @@ POST /api/session.prompt  { sessionId, content: '查本月销售' } ← 只有�
 
 ---
 
-## 第十六页 · 收尾
+## 第十七页 · 收尾
 
 最后总结三点。
 
