@@ -236,20 +236,36 @@ DSH 的 skills 是插件（`SKILL.md`），配 `skill-filesystem` 自动注入�
 
 DSH 的**工具执行流水线**本质是一条"权限可以分层介入的管道"。三层权限分别落在三个不同的环节，模型在中间任何一个环节都绕不过去：
 
-```text
-模型想查销售数据
-  │
-  ▼
-① 工具注册/作用域（L1 功能权限）── 这个用户的会话里"有没有"查销售工具？
-  │                                   （没有 → 模型根本看不到这个工具，谈不上调用）
-  ▼
-② 工具内部 / data guard（L2 数据行权限）── 用户归属 A 部门 → 查询强制加 WHERE dept='A'
-  │                                   （工具内部就限死了数据范围，不靠模型"自觉"）
-  ▼
-③ tools/post-execute（L3 字段权限）── 结果出来后，裁剪掉 amount/cost 字段，只留 qty
-  │                                   （模型拿到手已经是脱敏后的数据）
-  ▼
-模型看到"处理过"的结果
+```mermaid
+flowchart TD
+    A["👤 用户：zhangsan（A 部门·无金额字段权限）\n自然语言：我要看销售数据"] --> B["Agent loop（turn/step）"]
+
+    subgraph "① L1 功能权限 —— 工具可见性"
+        B --> C{"该用户作用域里\n注册了 query_sales 吗？"}
+        C -- "❌ 无权（如 lisi）" --> C1["工具不可见 → 模型调它报 UNKNOWN_TOOL\n根本谈不上绕过"]
+        C -- "✅ 有权" --> D
+        style C fill:#ffd6d6,stroke:#c0392b
+        style C1 fill:#ffecec,stroke:#c0392b
+    end
+
+    subgraph "② L2 数据行权限 —— 数据源头限死"
+        D --> E["query_sales.execute\n（部门从用户身份取：dept='A' 硬编码进查询）"]
+        E --> E1["只可能查出 A 部门数据\n模型无法传部门参数（防注入）"]
+        E1 --> F["ToolGuard 单调守卫兜底\n只能缩权、后续不能放行"]
+        style E fill:#d6e9ff,stroke:#1f6fb2
+        style F fill:#d6e9ff,stroke:#1f6fb2
+    end
+
+    subgraph "③ L3 字段权限 —— 结果出口裁剪"
+        F --> G["tools/post-execute\n按用户字段权限裁剪"]
+        G --> G1["{kind:'accept', value: 只含 qty 的行}\n替换 value —— 审计/回放里也没有 amount/cost"]
+        style G fill:#d6ffd9,stroke:#1e8449
+        style G1 fill:#eaffef,stroke:#1e8449
+    end
+
+    G1 --> H["模型看到：只含 qty 的 A 部门数据（脱敏后）"]
+    H --> I["事件溯源日志：全链路留痕（可回放审计）"]
+    style I fill:#fff3d6,stroke:#b7950b
 ```
 
 **为什么这样分层最好：**
@@ -257,12 +273,34 @@ DSH 的**工具执行流水线**本质是一条"权限可以分层介入的管�
 - **L2 在工具内部（数据源侧）限死**，比在返回后过滤更可靠——查询层面就只可能拿到 A 部门的数据；
 - **L3 在结果出口裁剪**，且必须"替换 value"而非只换显示文本（官方明确：内容替换是展示策略而非保密策略，要藏值必须替换 value/block）。
 
+### 5.1b 三层权限在 DSH 工具流水线上的落点（总图）
+
+```mermaid
+flowchart LR
+    M["模型（LLM）"] -->|tool/call| PRE["tools/pre-execute\n（L2 兜底：可 allow/deny/ask）"]
+    PRE -->|allow| GUARD["ToolGuard\n单调守卫（只能 deny）"]
+    GUARD -->|放行| BODY["工具 execute()\n（L2 内部注入 dept 过滤）"]
+    BODY -->|返回全量行| POST["tools/post-execute\n（L3 字段裁剪 替换 value）"]
+    POST -->|裁剪后| RESULT["tools/result\n（冻结·权威结果）"]
+    RESULT --> M
+
+    L1N["L1 功能权限：作用域 + restrict\n（工具对无权用户不可见）"] -.-> M
+    L1N -.->|无权限会话里工具不在列表| PRE
+
+    style L1N fill:#ffd6d6,stroke:#c0392b
+    style PRE fill:#d6e9ff,stroke:#1f6fb2
+    style GUARD fill:#d6e9ff,stroke:#1f6fb2
+    style BODY fill:#d6e9ff,stroke:#1f6fb2
+    style POST fill:#d6ffd9,stroke:#1e8449
+    style RESULT fill:#fff3d6,stroke:#b7950b
+```
+
 ### 5.2 逐层实现（用 DSH 的真实机制）
 
 **L1 功能权限 → 作用域注册 + ToolRestriction（工具可不可见）**
 - 思路：把"查看销售数据"做成一个（或一组）工具，按用户角色**只注册到该用户的作用域**，或对该作用域做 **ToolRestriction 过滤**；
 - DSH 机制：`ctx.tools.register`（全局）＋ scope（每个 agent 一个作用域）＋ `ToolRestriction`（对作用域的实时过滤，allow/deny 列表）；
-- 效果：无权用户 → 工具不在其可见列表 → **模型调用时报 `UNKNOWN_TOOL`**，pf 审计里也留痕；
+- 效果：无权用户 → 工具不在其可见列表 → **模型调用时报 `UNKNOWN_TOOL`**，审计里也留痕；
 - 对应你的 ERP：L1 的"功能权限表"决定"给哪个作用域注册/过滤掉哪些工具"。
 
 **L2 数据行权限 → 工具内部注入+守卫（数据范围）**
@@ -278,46 +316,50 @@ DSH 的**工具执行流水线**本质是一条"权限可以分层介入的管�
 - 官方指引（重要）：要隐藏程序化值（金额/成本），必须**替换 `value`** 把字段真正拿掉，而不是只换给模型看的文字——否则审计/回放里还能看到；
 - 对应你的 ERP：L3 的"字段权限表"决定 `post-execute` 裁剪哪些 JSON 字段（如 `amount`/`cost` → 返回时剔除）。
 
-### 5.3 一个最小实现示意（不是假代码，是 DSH 工具注册的真实形态）
+### 5.3 一次"查销售数据"请求如何运作（完整时序）
 
-```js
-// 查销售工具（带 L2 行权限 + L3 字段裁剪）
-ctx.tools.register({
-  name: 'query_sales', description: '查询销售数据',
-  parameters: {
-    dateRange: { type: 'string', required: true, description: '日期区间' },
-    // 注意：不暴露 dept 参数 —— 部门来自用户身份，不由模型指定（防注入）
-  },
-  output: {
-    schema: { type: 'object', additionalProperties: false,
-      properties: { rows: { type: 'array' } }, required: ['rows'] },
-  },
-  async execute(args, exec) {
-    // L2：部门从当前用户身份取，硬编码进查询，不由模型传
-    const dept = getCurrentUserDept(exec);          // 该用户只有 A 部门权限
-    const rows = await erpClient.querySales({ ...args, where: `dept='${dept}'` });
-    return { rows };                                 // 全量行（含 amount/cost）
-  },
-})
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 用户张三(A部门,仅qty字段权限)
+    participant AGT as Agent loop
+    participant TOOLS as ctx.tools
+    participant GUARD as ToolGuard
+    participant TOOL as query_sales.execute
+    participant ERP as ERP数据源
+    participant POST as post-execute
+    participant LOG as 事件溯源日志
 
-// L3：字段裁剪 —— post-execute 出口按用户字段权限删列
-ctx.on('tools/post-execute', async ({ execution, result }, next) => {
-  const allowed = { qty: true };                     // 该用户只有"数量"字段权限
-  if (execution.name !== 'query_sales') return next();
-  const rows = result.value.rows;
-  const filtered = rows.map(r => {
-    const o = {};
-    for (const k of Object.keys(r)) if (allowed[k]) o[k] = r[k];
-    return o;                                        // 只留 qty，amount/cost 没了
-  });
-  return { kind: 'accept', value: { rows: filtered } };  // 替换 value，真删字段
-})
+    U->>AGT: 这个月销售数据给我看下
+    Note over AGT,TOOLS: 1 L1 功能权限:张三作用域里有 query_sales，lisi 没有则工具不可见
+    AGT->>TOOLS: tool/call query_sales(dateRange=本月)
+    TOOLS->>GUARD: 2 tools/pre-execute → allow 张三有权
+    GUARD->>TOOL: 3 放行 ToolGuard 单调守卫，只能缩权
+    activate TOOL
+    Note over TOOL: 4 L2 行权限:dept 取张三的部门 A，模型无法传
+    TOOL->>ERP: SELECT ... WHERE dept=A
+    ERP-->>TOOL: 返回 A 部门全量行(含 qty amount cost)
+    deactivate TOOL
+    TOOL-->>POST: 返回全量行
+    activate POST
+    Note over POST: 5 L3 字段权限:张三字段权限=qty 裁剪
+    POST-->>TOOLS: accept value 裁剪后的行(删掉 amount cost)
+    deactivate POST
+    TOOLS-->>AGT: 6 tool/result 冻结权威结果
+    AGT-->>U: 7 张三看到只含 qty 的 A 部门数据
+    Note over LOG: 全程 tool/call→tool/result 已入事件溯源日志，可回放审计
 ```
 
-```yaml
-# L1：功能权限 —— 无权限用户的会话里根本不注册这个工具（或 ToolRestriction 过滤）
-# 在 agent preset 或作用域层配置，按角色决定挂哪些工具
-```
+**这个时序图读法（每一步谁做什么）：**
+| 步骤 | 环节 | 权限/动作 |
+| --- | --- | --- |
+| ① | L1 功能权限 | 张三作用域里有工具 → 模型看得到；lisi 作用域里没有 → 模型看不到 |
+| ③④ | L2 兜底 | `pre-execute` + `ToolGuard`：有权→allow；guard 只能 deny 不能反悔 |
+| ⑤ | L2 行权限 | `execute` 内部取用户部门、硬编码进 SQL——**模型传不了 dept（schema 无此参数，防注入）** |
+| ⑥ | L3 字段权限 | `post-execute` 出口裁剪，**替换 value** 删掉 amount/cost |
+| ⑦⑧ | 交付 | 模型看到脱敏后的数据；全程入事件溯源日志 |
+
+> 代码形态参考（不在正文展开）：工具 schema 只暴露业务参数（`dateRange`），不暴露 `dept`；`post-execute` 用 `{kind:'accept', value: 裁剪值}` 替换 value——需要时再补完整示例。
 
 ### 5.4 为什么这个设计"比在业务代码里写 if 强"
 
