@@ -42,6 +42,30 @@ dsh 的核心哲学是 **Everything is a Plugin**：模型、工具、会话、�
 
 "一切皆插件"不是口号，是架构：装什么、叠哪层，全在配置文件里；你写的插件和官方内置的一样，没有隐藏内核。官方没做的能力，你自己能补。
 
+那张"插件运行时"的图，一眼看懂 Cordis 在 DeepSeek Harness 里的位置——Agent Loop、模型、工具、Session、Web 全部是跑在 Cordis 上的领域插件，都进同一个插件运行时：
+
+![Cordis 在 DSH 中的位置，一切进入同一个插件运行时](image/1.png)
+
+再看能力怎么发布和访问：Provider 把实例注册到稳定的 ctx key，Consumer 依赖能力名称、不 import 具体实现——这就是"一切皆插件"背后 Service 的协作方式：
+
+![Service 能力如何发布和访问](image/5.png)
+
+而 Harness 整套能力的组织，正是建立在 Cordis 原语（Service/Injection/Effect/Event）上的完整 Capability Seam——Definition（定义）、Provider（实现）、Consumer（使用）三种角色：
+
+![Capability Seam：Agent 能力为什么分成三种角色](image/11.png)
+
+这套机制解决的不是单一问题，而是一组运行时问题——模块多、产品组合不同、依赖不稳定、启动顺序靠手工、卸载留垃圾；Cordis 的解法是把"模块关系"从隐含约定变成运行时可管理的事实：
+
+![Cordis 解决了哪些运行时问题](image/2.png)
+
+其中 Context 是插件访问运行时能力的统一入口，也是 Cordis 记录作用域和所有权的位置——Service（读取进入具名服务解析）、Event（监听/广播/包装）、Lifecycle（注册归当前 Fiber）：
+
+![Context：插件在哪里协作](image/4.png)
+
+而 Fiber、Effect、Dispose 保证这一切可逆——Fiber 表示插件实例，Effect 记录它拥有的贡献，Dispose 负责完整撤销，热更新后不会留下重复监听器和失控资源：
+
+![Lifecycle：Fiber、Effect 与 Dispose](image/8.png)
+
 ---
 
 ## 第四页 · 本机实例：一叠真实的配置文件
@@ -58,6 +82,10 @@ dsh 的核心哲学是 **Everything is a Plugin**：模型、工具、会话、�
 ```
 
 `cordis.yml` 是空的，`cordis.patch.yml` 装满插件。所有东西都在配置文件里声明——**没有魔法**。而 `package.json` 里的 `bundles` 就是 dsh 自带的"出厂插件层"：`dsh-base`（核心基座，所有 profile 的第一层）、`dsh-web-app`（浏览器表面）、`dsh-headless`（一次性任务运行器）。
+
+这张图把"Bundle 与 Profile 如何组成产品"讲透了：Bundle 是"可分发的 patch layer"（选一组产品能力），Profile 是"具名组合"（记录有序 Bundle + 用户插件 + 自己的 patch）——Web 和 Headless 的差异来自插件树，不来自 Agent Loop 分支：
+
+![Composition：Bundle 与 Profile 如何组成产品](image/12.png)
 
 ---
 
@@ -86,6 +114,14 @@ export function apply(ctx) {
 
 模型、搜索、定时、UI 的插件都长这样，只是挂载点不同。这就是"万物皆插件"最直接的实证。
 
+Plugin 是 Cordis 的运行时挂载单位：函数、带 apply 的对象、Service 子类都可以成为 Plugin；Loader 读取配置并创建插件 Fiber——这张图讲清了"功能如何进入运行时"：
+
+![Plugin 功能如何进入运行时](image/3.png)
+
+Plugin、Context、Service、Injection 四个对象合在一起才形成完整的插件协作关系——Provider 进入运行时并通过 Context 发布 Service，Consumer 声明 Injection、依赖满足后注册自己的贡献：
+
+![协作：Plugin、Context、Service 与 Injection 如何协作](image/7.png)
+
 ---
 
 ## 第六页 · 一次对话背后的时序
@@ -106,6 +142,14 @@ export function apply(ctx) {
 一是**会话日志 = 事件溯源**。每一步都写进 append-only 的会话日志，"模型可见即已记录"是运行时不变量——所以一切可审计、可回放、可分叉。
 
 二是**工具要过一套流水线**。`tools/pre-execute`、`ToolGuard`、`tools/post-execute` 是三个内置的拦截点——审批、守卫、结果裁剪全挂在这里，不用改循环本身。
+
+插件之间靠两种方式通信：Service 是明确调用，Event 是解耦广播——Emit 广播"已经发生的事实"，Waterfall 让监听器包装、替换或停止默认行为：
+
+![Event：插件之间如何通信](image/9.png)
+
+而 Waterfall 正是"策略进入执行路径"的方式——它把策略插件接进真实执行路径（model/tool/approval），而不是只把规则写进 Prompt：调用 `next()` 表示继续下游、可包装返回值；直接 return 表示当前监听器拥有最终决定：
+
+![Waterfall：策略如何进入 Agent 执行路径](image/10.png)
 
 ---
 
@@ -167,6 +211,10 @@ export function apply(ctx) { ctx.webServer.register(...) }
 // ✅ 必须声明
 export const inject = ['webServer']
 ```
+
+这个门禁的底层机制是 Injection——它是持续的依赖关系，不只检查第一次启动的顺序：必需 Service 缺失时 Consumer 保持 PENDING、不会部分运行；全部 Injection 就绪后 Cordis 才执行插件 apply。理解了这张图就知道为什么"没声明就是崩"：
+
+![Injection：依赖如何声明，插件何时激活](image/6.png)
 
 事故 2（SessionEvent 白名单）更隐蔽：DSH 会话日志是事件溯源，往日志写自定义类型（如 `cron/dispatch`）会让整段历史无法加载。审计应该走 logger，绝不进日志：
 
@@ -264,6 +312,10 @@ POST /api/session.prompt  { sessionId, content: '查本月销售' } ← 只有�
 第二是**早期红利**：dsh 是 8 月 13 号才开源的，现在沉淀的插件和踩坑方法论都是稀缺资产，入场越早越有先发优势。
 
 第三是**方法论可迁移**：自检防线、绝不写自定义事件、事件溯源审计——这些经验不绑定 dsh，换到任何 Agent 框架都通用。
+
+回过头看，这套机制之所以能支撑整个 Agent Runtime，是因为它回答了四个问题——插件怎样进入、怎样依赖、怎样通信、怎样退出；而 Harness 用 Definition、Provider、Consumer 把可替换的 Agent 能力（Agent/Loop、LLM/Tools）组织起来：
+
+![总结：Cordis 如何支撑整个 Agent Runtime](image/13.png)
 
 **工具会迭代，方法论是长期资产。** 谢谢大家。
 
